@@ -161,4 +161,4 @@ encoder_outputs, decoder_logits, decoder_attn = model.forward(fused_features_pad
 print("encoder output's shape :",encoder_outputs.shape)
 print("decoder_logits' shape :", decoder_logits.shape)
 if decoder_attn:
-    print("decoder_attn's shape :", decoder_attn.shape)
+    print("decoder_attn's shape :", decoder_attn.shape)# Temporary change

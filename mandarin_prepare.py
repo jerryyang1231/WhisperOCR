@@ -130,13 +130,12 @@ def prepare_mandarin(
     check_mandarin_folders(data_folder, splits)
 
     # create csv files for each split
-    # 先用clean測試
     all_texts = {}
     for split_index in range(len(splits)):
         split = splits[split_index]
 
         wav_lst = get_all_files(
-            os.path.join(data_folder, "clean", split), match_and=[".wav"]
+            os.path.join(data_folder, "noisy", split, "SNR_20dB"), match_and=[".wav"]
         )
         
         text_lst = get_all_files(
@@ -282,10 +281,18 @@ class LSRow:
 
 
 def process_line(wav_file, text_dict) -> LSRow:
-    # wav_file 是路徑，取檔案名稱(最後一個元素)然後去掉附檔名
-    snt_id = wav_file.split("/")[-1].replace(".wav", "")
+    # 從路徑中提取檔案名稱
+    file_name = wav_file.split("/")[-1]
+    # 去掉 .wav 附檔名
+    base_name = file_name.replace(".wav", "")
+    # 提取 snt_id, 根據例子 snt_id 是 _ 之前的部分
+    snt_id = base_name.split("_")[0]
     # 這邊speaker_id可能沒有取好，不過我所有音檔都是同一個人所以先暫時不管
     spk_id = snt_id[-4]
+    
+    if snt_id not in text_dict:
+        raise KeyError(f"Missing key: {snt_id} in text_dict")
+    
     wrds = text_dict[snt_id]
     wrds = " ".join(wrds.split("_"))
 
@@ -372,7 +379,7 @@ def create_csv(save_folder, wav_lst, text_dict, split, select_n_sentences):
 
 def skip(splits, save_folder, conf):
     """
-    Detect when the librispeech data prep can be skipped.
+    Detect when the mandarin data prep can be skipped.
 
     Arguments
     ---------
@@ -467,7 +474,7 @@ def check_mandarin_folders(data_folder, splits):
     """
     # Checking if all the splits exist
     for split in splits:
-        split_folder = os.path.join(data_folder, "clean", split)
+        split_folder = os.path.join(data_folder, "noisy", split, "SNR_20dB")
         if not os.path.exists(split_folder):
             err_msg = (
                 "the folder %s does not exist (it is expected in the "

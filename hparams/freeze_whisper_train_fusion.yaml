@@ -7,13 +7,13 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>
+output_folder: !ref results/whisper/<seed>/freeze_whisper_train_fusion_20bB
 output_wer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # URL for the biggest Fairseq english whisper model.
-whisper_hub: openai/whisper-medium
+whisper_hub: openai/whisper-base
 whisper_folder: !ref <save_folder>/whisper_checkpoint
 
 # Normalize the english inputs with
@@ -40,11 +40,14 @@ test_csv:
     - !ref <output_folder>/tt.csv
     # - !ref <output_folder>/test-other.csv
 
+image_folder: /share/nas169/jerryyang/corpus/mandarin/image
+
 ckpt_interval_minutes: 10 # save checkpoint every N min
 
 ############################## Training Parameters #############################
 freeze_encoder: True
-# freeze: True
+freeze: True
+train_fusion_only: True
 number_of_epochs: 1
 weight_decay: 0.01
 lr_whisper: 1e-5
@@ -58,9 +61,8 @@ sampling_rate: 16_000
 # With data_parallel batch_size is split into N jobs
 # With DDP batch_size is multiplied by N jobs
 # This setup works well with 1x 32GB GPU
-batch_size: 16
-# test_batch_size: 16
-test_batch_size: 4
+batch_size: 1
+test_batch_size: 1
 grad_accumulation_factor: 1
 
 # Decoding parameters
@@ -120,10 +122,10 @@ epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
 
 whisper: !new:speechbrain.lobes.models.huggingface_transformers.whisper.Whisper
     source: !ref <whisper_hub>
-    freeze_encoder: !ref <freeze_encoder>
-    # freeze: !ref <freeze>
+    # freeze_encoder: !ref <freeze_encoder>
+    freeze: !ref <freeze>
     save_path: !ref <whisper_folder>
-    language: "english"
+    language: "chinese"
     task: "transcribe"
     sampling_rate: !ref <sampling_rate>
 
@@ -135,6 +137,7 @@ nll_loss: !name:speechbrain.nnet.losses.nll_loss
 modules:
     whisper: !ref <whisper>
 
+fusion_module: !new:model.FusionModule
 ############################## Decoding & optimiser ############################
 
 whisper_opt_class: !name:torch.optim.AdamW
@@ -172,3 +175,9 @@ error_rate_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
 
 cer_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
     split_tokens: True
+
+# pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
+#     loadables:
+#         whisper: !ref <whisper>
+#     paths:
+#         whisper: path/to/pretrained/whisper/model.ckpt

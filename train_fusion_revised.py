@@ -36,12 +36,11 @@ logger = logging.getLogger(__name__)
 
 # Define training procedure
 class ASR(sb.Brain):
-    def __init__(self, modules=None, hparams=None, run_opts=None, opt_class=None, checkpointer=None):
-        super().__init__(modules=modules, hparams=hparams, run_opts=run_opts, opt_class=opt_class, checkpointer=checkpointer)
-        self.fusion_module = hparams["fusion_module"]  # 使用 YAML 文件中的 fusion_module
-        self.train_fusion_only = ["train_fusion_only"]
+    # def __init__(self, modules=None, hparams=None, run_opts=None, opt_class=None, checkpointer=None):
+    #     super().__init__(modules=modules, hparams=hparams, run_opts=run_opts, opt_class=opt_class, checkpointer=checkpointer)
+    #     self.fusion_module = hparams["fusion_module"]  
     
-    def compute_forward(self, batch, stage):
+    def compute_forward(self, batch, stage):        
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
@@ -91,8 +90,8 @@ class ASR(sb.Brain):
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
       
         # 使用 FusionModule 進行特徵融合
-        fused_features = self.fusion_module(mel, visual_input)
-
+        fused_features = self.modules.fusion_module(mel, visual_input)        
+        
         # Forward encoder + decoder
         enc_out, logits, _ = self.modules.whisper(fused_features, bos_tokens)
         log_probs = self.hparams.log_softmax(logits)

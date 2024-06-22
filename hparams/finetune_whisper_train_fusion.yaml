@@ -133,10 +133,12 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
 
+fusion_module: !new:model.FusionModule
+
 modules:
     whisper: !ref <whisper>
+    fusion_module: !ref <fusion_module>
 
-fusion_module: !new:model.FusionModule
 ############################## Decoding & optimiser ############################
 
 whisper_opt_class: !name:torch.optim.AdamW

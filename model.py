@@ -67,7 +67,7 @@ class FusionModule(nn.Module):
             audio_features = self.audio_cnn(audio)
 
             # Flatten
-            # [batch_size, 1*num_mels, num_frames]
+            # [batch_size, 16*num_mels, num_frames]
             audio_features = audio_features.view(audio_features.size(0), -1, audio_features.size(3))
             # [batch_size, seq_len, feature_dim]
             audio_features = audio_features.permute(0, 2, 1)

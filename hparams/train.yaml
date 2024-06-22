@@ -122,9 +122,9 @@ epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
 whisper: !new:speechbrain.lobes.models.huggingface_transformers.whisper.Whisper
     source: !ref <whisper_hub>
     # freeze_encoder: !ref <freeze_encoder>
-    freeze: !ref <freeze>
+    # freeze: !ref <freeze>
     save_path: !ref <whisper_folder>
-    language: "chinese"
+    # language: "zh"
     task: "transcribe"
     sampling_rate: !ref <sampling_rate>
 
@@ -133,10 +133,11 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
 
+fusion_module: !new:model.FusionModule
+
 modules:
     whisper: !ref <whisper>
-
-fusion_module: !new:model.FusionModule
+    # fusion_module: !ref <fusion_module>
 ############################## Decoding & optimiser ############################
 
 whisper_opt_class: !name:torch.optim.AdamW

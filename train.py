@@ -15,7 +15,7 @@ Authors
 """
 
 # my command
-# python train.py hparams/train.yaml --test_only
+# CUDA_VISIBLE_DEVICES=1 python train.py hparams/test_only.yaml --test_only
 
 import logging
 import os
@@ -44,7 +44,7 @@ class ASR(sb.Brain):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
-
+        
         # mel's shape = [16, 80, 3000]
         mel = self.modules.whisper._get_mel(wavs)
         mel = mel.to(self.device)
@@ -92,6 +92,9 @@ class ASR(sb.Brain):
         # # 使用 FusionModule 進行特徵融合
         # fused_features = self.fusion_module(mel, visual_input)
 
+        # 在forward之前 freeze Whisper
+        self.modules.whisper.freeze_model(self.modules.whisper)
+        
         # Forward encoder + decoder
         enc_out, logits, _ = self.modules.whisper(mel, bos_tokens)
         log_probs = self.hparams.log_softmax(logits)
@@ -211,34 +214,34 @@ class ASR(sb.Brain):
                 with open(self.hparams.test_wer_file, "w") as w:
                     self.wer_metric.write_stats(w)
     
-    def read_image(self, image_path):
-        """
-        讀取圖片並進行預處理，將其轉換為張量。
+    # def read_image(self, image_path):
+    #     """
+    #     讀取圖片並進行預處理，將其轉換為張量。
 
-        參數
-        ----
-        image_path : str
-            圖片的文件路徑。
+    #     參數
+    #     ----
+    #     image_path : str
+    #         圖片的文件路徑。
 
-        返回
-        ----
-        torch.Tensor
-            經過預處理的圖片張量。
-        """
-        # 定義圖片轉換
-        transform = transforms.Compose([
-            transforms.Resize((384, 384)),  # 調整圖片大小
-            transforms.ToTensor(),          # 轉換為張量
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 標準化
-        ])
+    #     返回
+    #     ----
+    #     torch.Tensor
+    #         經過預處理的圖片張量。
+    #     """
+    #     # 定義圖片轉換
+    #     transform = transforms.Compose([
+    #         transforms.Resize((384, 384)),  # 調整圖片大小
+    #         transforms.ToTensor(),          # 轉換為張量
+    #         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 標準化
+    #     ])
 
-        # 打開圖片
-        image = Image.open(image_path).convert('RGB')
+    #     # 打開圖片
+    #     image = Image.open(image_path).convert('RGB')
         
-        # 應用轉換
-        image_tensor = transform(image)
+    #     # 應用轉換
+    #     image_tensor = transform(image)
         
-        return image_tensor
+    #     return image_tensor
 
 
 def dataio_prepare(hparams, tokenizer):
@@ -353,7 +356,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="exp_scratch_without_image_noisy_20dB", config=hparams)
+    wandb.init(project="exp_noisy_20dB", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(

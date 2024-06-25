@@ -7,7 +7,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>/test_only_20dB
+output_folder: !ref results/whisper/<seed>/add_noise_test
 output_wer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -42,6 +42,11 @@ test_csv:
 
 image_folder: /share/nas169/jerryyang/corpus/mandarin/image
 
+# Data for augmentation
+data_folder_noise: /share/nas169/jerryyang/speechbrain/tests/samples/noise
+noise_annotation: /share/nas169/jerryyang/speechbrain/tests/samples/annotation/noise.csv
+replacements: {'noise_folder': '/share/nas169/jerryyang/speechbrain/tests/samples/noise'}
+
 ckpt_interval_minutes: 10 # save checkpoint every N min
 
 ############################## Training Parameters #############################
@@ -60,14 +65,18 @@ sampling_rate: 16_000
 # With data_parallel batch_size is split into N jobs
 # With DDP batch_size is multiplied by N jobs
 # This setup works well with 1x 32GB GPU
-batch_size: 2
-test_batch_size: 2
+batch_size: 1
+test_batch_size: 1
 grad_accumulation_factor: 1
 
 # Decoding parameters
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
 test_beam_size: 8
+
+# AddNoise
+sample_rate: 44100
+num_workers: 4
 
 ####################### Model Parameters #######################################
 
@@ -106,16 +115,25 @@ epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
 #     drop_count_low: 1000
 #     drop_count_high: 2000
 
-# # Augmenter: Combines previously defined augmentations to perform data augmentation
-# wav_augment: !new:speechbrain.augment.augmenter.Augmenter
-#     concat_original: True
-#     min_augmentations: 3
-#     max_augmentations: 3
-#     augment_prob: 1.0
-#     augmentations: [
-#         !ref <speed_perturb>,
-#         !ref <drop_freq>,
-#         !ref <drop_chunk>]
+# Add noise to input signal
+add_noise: !new:speechbrain.augment.time_domain.AddNoise
+   csv_file: !ref <noise_annotation>
+   replacements: !ref <replacements>
+#    snr_low: 0
+#    snr_high: 15
+   noise_sample_rate: !ref <sample_rate>
+   clean_sample_rate: !ref <sample_rate>
+   num_workers: !ref <num_workers>
+
+# Augmenter: Combines previously defined augmentations to perform data augmentation
+wav_augment: !new:speechbrain.augment.augmenter.Augmenter
+    concat_original: False
+    min_augmentations: 1
+    max_augmentations: 1
+    augment_prob: 1.0
+    augmentations: [
+        !ref <add_noise>,
+        ]
 
 ############################## Models ##########################################
 
@@ -132,12 +150,15 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
     apply_log: True
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
+l1_loss: !name:speechbrain.nnet.losses.l1_loss
 
-fusion_module: !new:model.FusionModule
+fusion_module: !new:modified_model.FusionModule
 
 modules:
     whisper: !ref <whisper>
-    # fusion_module: !ref <fusion_module>
+    fusion_module: !ref <fusion_module>
+    target_generator: !ref <whisper>
+
 ############################## Decoding & optimiser ############################
 
 whisper_opt_class: !name:torch.optim.AdamW
@@ -175,9 +196,3 @@ error_rate_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
 
 cer_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
     split_tokens: True
-
-# pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
-#     loadables:
-#         whisper: !ref <whisper>
-#     paths:
-#         whisper: path/to/pretrained/whisper/model.ckpt

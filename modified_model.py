@@ -85,7 +85,7 @@ class FusionModule(nn.Module):
                     key = value = visual_features
                     attn_output, _ = self.cross_attention_layers[i](query=query, key=key, value=value)
                     # 第一層用 audio feature extractor 的 output 做 residual
-                    attn_output =  attn_output + audio_features
+                    attn_output = attn_output + audio_features
                 else:
                     query = audio_features
                     key = value = attn_output
@@ -100,44 +100,45 @@ class FusionModule(nn.Module):
                     
         return fused_features
 
-# 準備輸入數據
-batch_size = 1
-num_mels = 80
-num_frames = 3000  
-height = 384
-width = 384
-# 模擬 Mel 頻譜圖
-audio_input = torch.randn(batch_size, num_mels, num_frames)  
-# 模擬字幕圖
-visual_input = torch.randn(batch_size, 3, height, width)
+# # 準備輸入數據
+# batch_size = 1
+# num_mels = 80
+# num_frames = 3000  
+# height = 384
+# width = 384
+# # 模擬 Mel 頻譜圖
+# audio_input = torch.randn(batch_size, num_mels, num_frames)  
+# # 模擬字幕圖
+# visual_input = torch.randn(batch_size, 3, height, width)
 
-# 創建FusionModule實例
-fusion_module = FusionModule()
+# # 創建FusionModule實例
+# fusion_module = FusionModule()
 
 # # 通過FusionModule進行特徵提取
-fused_features = fusion_module(audio_input, visual_input)
-# print("fused_features' shape :", fused_features.shape)
+# fused_features = fusion_module(audio_input, visual_input)
+# # print("fused_features' shape :", fused_features.shape)
 
-# 將fused_features和tokens移動到同一設備
-fused_features = fused_features.to(fusion_module.device)
+# # 將fused_features和tokens移動到同一設備
+# fused_features = fused_features.to(fusion_module.device)
 
-# 定義模型參數
-model_hub = "openai/whisper-base" 
-save_path = "/share/nas169/jerryyang/AVfusion/saved_model"  
-sampling_rate = 16000
+# # 定義模型參數
+# model_hub = "openai/whisper-base" 
+# save_path = "/share/nas169/jerryyang/AVfusion/saved_model"  
+# sampling_rate = 16000
 
-# 創建 Whisper 模型實例
-model = Whisper(
-    source=model_hub,
-    save_path=save_path,
-    sampling_rate=sampling_rate,
-).to(fusion_module.device)
+# # 創建 Whisper 模型實例
+# model = Whisper(
+#     source=model_hub,
+#     save_path=save_path,
+#     sampling_rate=sampling_rate,
+# ).to(fusion_module.device)
 
-# 準備輸入數據
-tokens = torch.tensor([[1, 1]]) * model.model.config.decoder_start_token_id
-tokens = tokens.to(fusion_module.device)
+# # 準備輸入數據
+# tokens = torch.tensor([[1, 1]]) * model.model.config.decoder_start_token_id
+# tokens = tokens.to(fusion_module.device)
 
-# 使用 FusionModule 的特徵作為 Whisper 模型的輸入
-encoder_outputs, decoder_logits, _ = model.forward(fused_features, tokens)
+# # 使用 FusionModule 的特徵作為 Whisper 模型的輸入
+# encoder_outputs, decoder_logits, _ = model.forward(fused_features, tokens)
 # print("encoder output's shape :",encoder_outputs.shape)
-# print("decoder_logits' shape :", decoder_logits.shape)
+# print("decoder logits :", decoder_logits)
+# print("decoder logits' shape :", decoder_logits.shape)

@@ -1,6 +1,5 @@
 saved_model/
 results
-train_Re0
 wandb
-dev
 savedir
+test

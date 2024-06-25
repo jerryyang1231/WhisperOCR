@@ -4,6 +4,9 @@
 # Authors: Adel Moumen 2022 & 2024, Titouan Parcollet 2022
 # ################################
 
+# my command
+# python train_fusion_revised.py hparams/finetune_whisper_train_fusion.yaml
+
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
@@ -53,8 +56,8 @@ lr_whisper: 1e-5
 warmup_steps: 500
 max_grad_norm: 2.0
 sorting: ascending
-precision: fp16 # bf16, fp16 or fp32
-eval_precision: fp16
+precision: fp32 # bf16, fp16 or fp32
+eval_precision: fp32
 sampling_rate: 16_000
 
 # With data_parallel batch_size is split into N jobs
@@ -79,7 +82,6 @@ valid_loader_kwargs:
 
 test_loader_kwargs:
     batch_size: !ref <test_batch_size>
-
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
     limit: !ref <number_of_epochs>
@@ -124,7 +126,7 @@ whisper: !new:speechbrain.lobes.models.huggingface_transformers.whisper.Whisper
     # freeze_encoder: !ref <freeze_encoder>
     # freeze: !ref <freeze>
     save_path: !ref <whisper_folder>
-    language: "zh"
+    # language: "zh"
     task: "transcribe"
     sampling_rate: !ref <sampling_rate>
 
@@ -133,7 +135,7 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
 
-fusion_module: !new:model.FusionModule
+fusion_module: !new:modified_model.FusionModule
 
 modules:
     whisper: !ref <whisper>
@@ -176,9 +178,3 @@ error_rate_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
 
 cer_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
     split_tokens: True
-
-# pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
-#     loadables:
-#         whisper: !ref <whisper>
-#     paths:
-#         whisper: path/to/pretrained/whisper/model.ckpt

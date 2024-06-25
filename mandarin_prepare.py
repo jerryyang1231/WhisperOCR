@@ -135,7 +135,7 @@ def prepare_mandarin(
         split = splits[split_index]
 
         wav_lst = get_all_files(
-            os.path.join(data_folder, "noisy", split, "SNR_20dB"), match_and=[".wav"]
+            os.path.join(data_folder, "clean", split), match_and=[".wav"]
         )
         
         text_lst = get_all_files(
@@ -474,7 +474,7 @@ def check_mandarin_folders(data_folder, splits):
     """
     # Checking if all the splits exist
     for split in splits:
-        split_folder = os.path.join(data_folder, "noisy", split, "SNR_20dB")
+        split_folder = os.path.join(data_folder, "clean", split)
         if not os.path.exists(split_folder):
             err_msg = (
                 "the folder %s does not exist (it is expected in the "

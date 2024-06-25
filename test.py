@@ -15,7 +15,8 @@ Authors
 """
 
 # my command
-# python train_fusion.py hparams/train_fusion.yaml
+# python test.py hparams/finetune_whisper_train_fusion.yaml
+# CUDA_VISIBLE_DEVICES=1 python test.py hparams/freeze_whisper_train_fusion.yaml
 
 import logging
 import os
@@ -35,20 +36,16 @@ import wandb
 logger = logging.getLogger(__name__)
 
 # Define training procedure
-class ASR(sb.Brain):
-    def __init__(self, modules=None, hparams=None, run_opts=None, opt_class=None, checkpointer=None):
-        super().__init__(modules=modules, hparams=hparams, run_opts=run_opts, opt_class=opt_class, checkpointer=checkpointer)
-        self.fusion_module = hparams["fusion_module"]  # 使用 YAML 文件中的 fusion_module
-    
+class ASR(sb.Brain):   
     def compute_forward(self, batch, stage):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
-
-        # mel's shape = [16, 80, 3000]
+        
+        # mel's shape = [1, 80, 3000]
         mel = self.modules.whisper._get_mel(wavs)
         mel = mel.to(self.device)
-        
+
         # id 的列表
         ids = batch.id  # 注意這裡使用ids，而非單一id
         
@@ -60,25 +57,24 @@ class ASR(sb.Brain):
                 image_path = hparams["image_folder"] + "/cv/" + single_id + ".jpg"
             elif stage == sb.Stage.TEST:
                 image_path = hparams["image_folder"] + "/tt/" + single_id + ".jpg"
-            image_paths.append(image_path)                   
+                # 先從 tt 資料夾找，找不到再去 cv 資料夾找
+                image_path_tt = hparams["image_folder"] + "/tt/" + single_id + ".jpg"
+                image_path_cv = hparams["image_folder"] + "/cv/" + single_id + ".jpg"
+                if os.path.exists(image_path_tt):
+                    image_path = image_path_tt
+                else:
+                    image_path = image_path_cv
+            image_paths.append(image_path)            
                
         # 讀取圖片並轉換成張量
         visual_inputs = [self.read_image(image_path) for image_path in image_paths]
 
         # 將所有圖片張量堆疊成一個大張量
-        # visual_input's shape = [16, 3, 384, 384]
+        # visual_input's shape = [1, 3, 384, 384]
         visual_input = torch.stack(visual_inputs)
         visual_input = visual_input.to(self.device)
-        
+       
         bos_tokens, bos_tokens_lens = batch.tokens_bos
-
-        # # Add waveform augmentation if specified.
-        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
-        #     wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
-        #     bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
-        #     bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
-        #         bos_tokens_lens
-        #     )
 
         # We compute the padding mask and replace the values with the pad_token_id
         # that the Whisper decoder expect to see.
@@ -90,8 +86,11 @@ class ASR(sb.Brain):
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
       
         # 使用 FusionModule 進行特徵融合
-        fused_features = self.fusion_module(mel, visual_input)
-
+        fused_features = self.modules.fusion_module(mel, visual_input)
+               
+        # 在forward之前 freeze Whisper
+        self.modules.whisper.freeze_model(self.modules.whisper)
+        
         # Forward encoder + decoder
         enc_out, logits, _ = self.modules.whisper(fused_features, bos_tokens)
         log_probs = self.hparams.log_softmax(logits)
@@ -102,7 +101,9 @@ class ASR(sb.Brain):
                 enc_out.detach(), wav_lens
             )
         elif stage == sb.Stage.TEST:
-            hyps, _, _, _ = self.hparams.test_search(enc_out.detach(), wav_lens)
+            hyps, _, _, _ = self.hparams.test_search(
+                enc_out.detach(), wav_lens
+            )
 
         return log_probs, hyps, wav_lens
 
@@ -113,7 +114,7 @@ class ASR(sb.Brain):
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
-
+        
         # # Label Augmentation
         # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
         #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
@@ -300,15 +301,6 @@ def dataio_prepare(hparams, tokenizer):
         return sig
     
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
-     
-    # # Define visual pipeline:
-    # @sb.utils.data_pipeline.takes("jpg")
-    # @sb.utils.data_pipeline.provides("visual_features")
-    # def visual_pipeline(jpg):
-    #     visual_features = read_image(jpg)
-    #     return visual_features
-
-    # sb.dataio.dataset.add_dynamic_item(datasets, visual_pipeline)
     
     # 3. Define text pipeline:
     @sb.utils.data_pipeline.takes("wrd")
@@ -353,7 +345,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="exp_scratch_noisy_20dB", config=hparams)
+    wandb.init(project="exp_fusion_noisy_20dB", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(
@@ -395,10 +387,10 @@ if __name__ == "__main__":
         opt_class=hparams["whisper_opt_class"],
     )
     
-    # We load the pretrained whisper model
-    if "pretrainer" in hparams.keys():
-        run_on_main(hparams["pretrainer"].collect_files)
-        hparams["pretrainer"].load_collected(asr_brain.device)
+    # # We load the pretrained whisper model
+    # if "pretrainer" in hparams.keys():
+    #     run_on_main(hparams["pretrainer"].collect_files)
+    #     hparams["pretrainer"].load_collected(asr_brain.device)
 
     # We dynamically add the tokenizer to our brain class.
     # NB: This tokenizer corresponds to the one used for Whisper.

@@ -15,7 +15,7 @@ Authors
 """
 
 # my command
-# python train_AddNoise.py hparams/add_noise_test.yaml
+# python train_v2.py hparams/finetune_whisper_train_fusion_v2.yaml
 
 import logging
 import os
@@ -23,15 +23,15 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from hyperpyyaml import load_hyperpyyaml
 
 import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
-from torchvision import transforms
-from PIL import Image
-import wandb 
 from speechbrain.dataio.dataio import get_image_paths, read_image
+import wandb 
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class ASR(sb.Brain):
         wavs, wav_lens = batch.sig
         
         # mel_clean's shape = [1, 80, 3000]
-        mel_clean = self.modules.target_generator._get_mel(wavs)
+        mel_clean = self.modules.whisper._get_mel(wavs)
         mel_clean = mel_clean.to(self.device)
 
         # id 的列表
@@ -85,20 +85,13 @@ class ASR(sb.Brain):
       
         # 使用 FusionModule 進行特徵融合
         fused_features = self.modules.fusion_module(mel_noisy, visual_input)
-               
-        # 在forward之前 freeze Whisper
-        self.modules.whisper.freeze_model(self.modules.whisper)
-        
-        # 在forward之前 freeze target generator
-        self.modules.target_generator.freeze_model(self.modules.target_generator)
         
         # training Forward encoder + decoder
         enc_out_noisy, logits_noisy, _ = self.modules.whisper(fused_features, bos_tokens)
         # log_probs_noisy = self.hparams.log_softmax(logits_noisy)
         
-        # bos_tokens 經過 augmentation 沒變，所以這邊沒特別處理
         # target generator Forward encoder + decoder
-        enc_out_clean, logits_clean, _ = self.modules.target_generator(mel_clean, bos_tokens)
+        enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
         # log_probs_clean = self.hparams.log_softmax(logits_clean)
         
         hyps = None
@@ -127,25 +120,21 @@ class ASR(sb.Brain):
             tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
                 tokens_eos_lens
             )
-
-        # loss = self.hparams.nll_loss(
-        #     log_probs, tokens_eos, length=tokens_eos_lens
-        # )
         
         Loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
         Loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
-        # Loss_dec = self.hparams.nll_loss(log_probs_noisy, tokens_eos, length=tokens_eos_lens)
         
-        # Modify logits_clean to one-hot encode and compute target class
+        # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
         target_class = torch.argmax(logits_clean, dim=-1)
         
-        # Calculate CE loss using logits_noisy and target class
-        logits_noisy_exp = torch.exp(logits_noisy)
-        target_logits_noisy_exp = logits_noisy_exp.gather(2, target_class.unsqueeze(1)).squeeze(-1)
-        sum_logits_noisy_exp = logits_noisy_exp.sum(dim=-1)
+        # 將 logits_noisy 轉換為 [batch_size * seq_len, num_classes] 的形狀
+        logits_noisy_flat = logits_noisy.view(-1, logits_noisy.size(2))
         
-        # Calculate Loss_dec
-        Loss_dec = -torch.log(target_logits_noisy_exp / sum_logits_noisy_exp).mean()   
+        # 將 target_class 轉換為 [batch_size * seq_len] 的形狀
+        target_class_flat = target_class.view(-1)
+        
+        # 計算 cross entropy loss
+        Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
         
         loss = Loss_mel + 2 * Loss_enc + 2 * Loss_dec 
 

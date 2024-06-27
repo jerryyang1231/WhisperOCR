@@ -15,8 +15,7 @@ Authors
 """
 
 # my command
-# python test.py hparams/finetune_whisper_train_fusion.yaml
-# CUDA_VISIBLE_DEVICES=1 python test.py hparams/freeze_whisper_train_fusion.yaml
+# python whisper_clean.py hparams/whisper_clean.yaml --test_only
 
 import logging
 import os
@@ -24,14 +23,16 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from hyperpyyaml import load_hyperpyyaml
 
 import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
-from torchvision import transforms
-from PIL import Image
+from speechbrain.dataio.dataio import get_image_paths, read_image
+from speechbrain.augment.time_domain import Resample
 import wandb 
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,40 +43,17 @@ class ASR(sb.Brain):
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
         
+        # 創建 Resample 實例
+        resampler = Resample(orig_freq=44100, new_freq=16000)
+        # 重新採樣
+        wavs = resampler(wavs)
+        
         # mel's shape = [1, 80, 3000]
         mel = self.modules.whisper._get_mel(wavs)
         mel = mel.to(self.device)
-
-        # id 的列表
-        ids = batch.id  # 注意這裡使用ids，而非單一id
-        
-        image_paths = []
-        for single_id in ids:
-            if stage == sb.Stage.TRAIN:
-                image_path = hparams["image_folder"] + "/tr/" + single_id + ".jpg"
-            elif stage == sb.Stage.VALID:
-                image_path = hparams["image_folder"] + "/cv/" + single_id + ".jpg"
-            elif stage == sb.Stage.TEST:
-                image_path = hparams["image_folder"] + "/tt/" + single_id + ".jpg"
-                # 先從 tt 資料夾找，找不到再去 cv 資料夾找
-                image_path_tt = hparams["image_folder"] + "/tt/" + single_id + ".jpg"
-                image_path_cv = hparams["image_folder"] + "/cv/" + single_id + ".jpg"
-                if os.path.exists(image_path_tt):
-                    image_path = image_path_tt
-                else:
-                    image_path = image_path_cv
-            image_paths.append(image_path)            
-               
-        # 讀取圖片並轉換成張量
-        visual_inputs = [self.read_image(image_path) for image_path in image_paths]
-
-        # 將所有圖片張量堆疊成一個大張量
-        # visual_input's shape = [1, 3, 384, 384]
-        visual_input = torch.stack(visual_inputs)
-        visual_input = visual_input.to(self.device)
        
         bos_tokens, bos_tokens_lens = batch.tokens_bos
-
+        
         # We compute the padding mask and replace the values with the pad_token_id
         # that the Whisper decoder expect to see.
         abs_tokens_lens = (bos_tokens_lens * bos_tokens.shape[1]).long()
@@ -84,15 +62,9 @@ class ASR(sb.Brain):
             < abs_tokens_lens[:, None]
         )
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
-      
-        # 使用 FusionModule 進行特徵融合
-        fused_features = self.modules.fusion_module(mel, visual_input)
-               
-        # 在forward之前 freeze Whisper
-        self.modules.whisper.freeze_model(self.modules.whisper)
         
         # Forward encoder + decoder
-        enc_out, logits, _ = self.modules.whisper(fused_features, bos_tokens)
+        enc_out, logits, _ = self.modules.whisper(mel, bos_tokens)
         log_probs = self.hparams.log_softmax(logits)
         
         hyps = None
@@ -106,7 +78,6 @@ class ASR(sb.Brain):
             )
 
         return log_probs, hyps, wav_lens
-
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
@@ -115,17 +86,10 @@ class ASR(sb.Brain):
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
-        # # Label Augmentation
-        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
-        #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
-        #     tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
-        #         tokens_eos_lens
-        #     )
-
         loss = self.hparams.nll_loss(
             log_probs, tokens_eos, length=tokens_eos_lens
         )
-
+        
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
             if hasattr(self.hparams, "normalized_transcripts"):
@@ -137,6 +101,8 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
             else:
                 # Decode token terms to words
                 predicted_words = [
@@ -146,10 +112,15 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
                 
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
 
+            print("predicted_words :", predicted_words)
+            print("target_words :", target_words)
+            
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
 
@@ -211,36 +182,17 @@ class ASR(sb.Brain):
             if if_main_process():
                 with open(self.hparams.test_wer_file, "w") as w:
                     self.wer_metric.write_stats(w)
-    
-    def read_image(self, image_path):
-        """
-        讀取圖片並進行預處理，將其轉換為張量。
-
-        參數
-        ----
-        image_path : str
-            圖片的文件路徑。
-
-        返回
-        ----
-        torch.Tensor
-            經過預處理的圖片張量。
-        """
-        # 定義圖片轉換
-        transform = transforms.Compose([
-            transforms.Resize((384, 384)),  # 調整圖片大小
-            transforms.ToTensor(),          # 轉換為張量
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 標準化
-        ])
-
-        # 打開圖片
-        image = Image.open(image_path).convert('RGB')
         
-        # 應用轉換
-        image_tensor = transform(image)
+    def on_fit_batch_end(self, batch, outputs, loss, should_step):     
         
-        return image_tensor
-
+        # Log to WandB
+        if if_main_process():  # Only log once per step
+            wandb.log({
+                "batch_train_loss": self.ob_loss.item(),
+                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
+                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
+                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+            })
 
 def dataio_prepare(hparams, tokenizer):
     """This function prepares the datasets to be used in the brain class.
@@ -297,7 +249,7 @@ def dataio_prepare(hparams, tokenizer):
     @sb.utils.data_pipeline.takes("wav")
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
-        sig = sb.dataio.dataio.read_audio(wav)
+        sig = sb.dataio.dataio.read_audio(wav)       
         return sig
     
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
@@ -345,7 +297,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="exp_fusion_noisy_20dB", config=hparams)
+    wandb.init(project="v2_debug", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(

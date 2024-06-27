@@ -30,6 +30,7 @@ import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
+from speechbrain.augment.time_domain import Resample
 import wandb 
 
 
@@ -41,6 +42,11 @@ class ASR(sb.Brain):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
+        
+        # 創建 Resample 實例
+        resampler = Resample(orig_freq=44100, new_freq=16000)
+        # 重新採樣
+        wavs = resampler(wavs)
         
         # mel_clean's shape = [1, 80, 3000]
         mel_clean = self.modules.whisper._get_mel(wavs)
@@ -122,7 +128,10 @@ class ASR(sb.Brain):
             )
         
         Loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
+        self.ob_Loss_mel = Loss_mel
+        
         Loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
+        self.ob_Loss_enc = Loss_enc
         
         # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
         target_class = torch.argmax(logits_clean, dim=-1)
@@ -135,9 +144,11 @@ class ASR(sb.Brain):
         
         # 計算 cross entropy loss
         Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
+        self.ob_Loss_dec = Loss_dec
         
         loss = Loss_mel + 2 * Loss_enc + 2 * Loss_dec 
-
+        self.ob_loss = loss
+        
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
             if hasattr(self.hparams, "normalized_transcripts"):
@@ -149,6 +160,8 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
             else:
                 # Decode token terms to words
                 predicted_words = [
@@ -158,6 +171,8 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
                 
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
@@ -223,8 +238,17 @@ class ASR(sb.Brain):
             if if_main_process():
                 with open(self.hparams.test_wer_file, "w") as w:
                     self.wer_metric.write_stats(w)
-
-
+        
+    def on_fit_batch_end(self, batch, outputs, loss, should_step):     
+        
+        # Log to WandB
+        if if_main_process():  # Only log once per step
+            wandb.log({
+                "batch_train_loss": self.ob_loss.item(),
+                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
+                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
+                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+            })
 
 def dataio_prepare(hparams, tokenizer):
     """This function prepares the datasets to be used in the brain class.
@@ -329,7 +353,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="exp_add_noise_test", config=hparams)
+    wandb.init(project="v2_debug", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(

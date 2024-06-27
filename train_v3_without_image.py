@@ -15,7 +15,7 @@ Authors
 """
 
 # my command
-# CUDA_VISIBLE_DEVICES=1 python train_v1.py hparams/freeze_whisper_train_fusion_v1.yaml
+# python train_v3_without_image.py hparams/test_only_v3.yaml --test_only
 
 import logging
 import os
@@ -23,15 +23,16 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from hyperpyyaml import load_hyperpyyaml
 
 import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
-from torchvision import transforms
-from PIL import Image
-import wandb 
 from speechbrain.dataio.dataio import get_image_paths, read_image
+from speechbrain.augment.time_domain import Resample
+import wandb 
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,24 +43,18 @@ class ASR(sb.Brain):
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
         
+        # 創建 Resample 實例
+        resampler = Resample(orig_freq=44100, new_freq=16000)
+        # 重新採樣
+        wavs = resampler(wavs)
+        
         # mel_clean's shape = [1, 80, 3000]
-        mel_clean = self.modules.target_generator._get_mel(wavs)
+        mel_clean = self.modules.whisper._get_mel(wavs)
         mel_clean = mel_clean.to(self.device)
 
         # id 的列表
         ids = batch.id  # 注意這裡使用ids，而非單一id
-        
-        # 使用提取的函數來獲取圖像路徑
-        image_paths = get_image_paths(ids, stage, self.hparams)       
-        
-        # 讀取圖片並轉換成張量
-        visual_inputs = [read_image(image_path) for image_path in image_paths]
-
-        # 將所有圖片張量堆疊成一個大張量
-        # visual_input's shape = [1, 3, 384, 384]
-        visual_input = torch.stack(visual_inputs)
-        visual_input = visual_input.to(self.device)
-       
+              
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
         # Add waveform augmentation if specified.
@@ -82,23 +77,13 @@ class ASR(sb.Brain):
             < abs_tokens_lens[:, None]
         )
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
-      
-        # 使用 FusionModule 進行特徵融合
-        fused_features = self.modules.fusion_module(mel_noisy, visual_input)
-               
-        # 在forward之前 freeze Whisper
-        self.modules.whisper.freeze_model(self.modules.whisper)
-        
-        # 在forward之前 freeze target generator
-        self.modules.target_generator.freeze_model(self.modules.target_generator)
         
         # training Forward encoder + decoder
-        enc_out_noisy, logits_noisy, _ = self.modules.whisper(fused_features, bos_tokens)
+        enc_out_noisy, logits_noisy, _ = self.modules.whisper(mel_noisy, bos_tokens)
         # log_probs_noisy = self.hparams.log_softmax(logits_noisy)
         
-        # bos_tokens 經過 augmentation 沒變，所以這邊沒特別處理
         # target generator Forward encoder + decoder
-        enc_out_clean, logits_clean, _ = self.modules.target_generator(mel_clean, bos_tokens)
+        enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
         # log_probs_clean = self.hparams.log_softmax(logits_clean)
         
         hyps = None
@@ -111,12 +96,12 @@ class ASR(sb.Brain):
                 enc_out_noisy.detach(), wav_lens
             )
 
-        return logits_clean, logits_noisy, hyps, wav_lens, mel_clean, fused_features, enc_out_clean, enc_out_noisy
+        return logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (logits_clean, logits_noisy, hyps, wav_lens, mel_clean, fused_features, enc_out_clean, enc_out_noisy) = predictions
+        (logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
@@ -127,28 +112,29 @@ class ASR(sb.Brain):
             tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
                 tokens_eos_lens
             )
-
-        # loss = self.hparams.nll_loss(
-        #     log_probs, tokens_eos, length=tokens_eos_lens
-        # )
         
-        Loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
+        Loss_mel = self.hparams.l1_loss(mel_noisy, mel_clean)
+        self.ob_Loss_mel = Loss_mel
+        
         Loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
-        # Loss_dec = self.hparams.nll_loss(log_probs_noisy, tokens_eos, length=tokens_eos_lens)
+        self.ob_Loss_enc = Loss_enc
         
-        # Modify logits_clean to one-hot encode and compute target class
+        # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
         target_class = torch.argmax(logits_clean, dim=-1)
         
-        # Calculate CE loss using logits_noisy and target class
-        logits_noisy_exp = torch.exp(logits_noisy)
-        target_logits_noisy_exp = logits_noisy_exp.gather(2, target_class.unsqueeze(1)).squeeze(-1)
-        sum_logits_noisy_exp = logits_noisy_exp.sum(dim=-1)
+        # 將 logits_noisy 轉換為 [batch_size * seq_len, num_classes] 的形狀
+        logits_noisy_flat = logits_noisy.view(-1, logits_noisy.size(2))
         
-        # Calculate Loss_dec
-        Loss_dec = -torch.log(target_logits_noisy_exp / sum_logits_noisy_exp).mean()   
+        # 將 target_class 轉換為 [batch_size * seq_len] 的形狀
+        target_class_flat = target_class.view(-1)
+        
+        # 計算 cross entropy loss
+        Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
+        self.ob_Loss_dec = Loss_dec
         
         loss = Loss_mel + 2 * Loss_enc + 2 * Loss_dec 
-
+        self.ob_loss = loss
+        
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
             if hasattr(self.hparams, "normalized_transcripts"):
@@ -160,7 +146,10 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
             else:
+                
                 # Decode token terms to words
                 predicted_words = [
                     self.tokenizer.decode(t, skip_special_tokens=True).strip()
@@ -169,6 +158,8 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
+                # 使用列表解析去掉每個字串中的空格
+                target_words = [''.join(word.split()) for word in target_words]
                 
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
@@ -234,8 +225,17 @@ class ASR(sb.Brain):
             if if_main_process():
                 with open(self.hparams.test_wer_file, "w") as w:
                     self.wer_metric.write_stats(w)
-
-
+        
+    def on_fit_batch_end(self, batch, outputs, loss, should_step):     
+        
+        # Log to WandB
+        if if_main_process():  # Only log once per step
+            wandb.log({
+                "batch_train_loss": self.ob_loss.item(),
+                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
+                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
+                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+            })
 
 def dataio_prepare(hparams, tokenizer):
     """This function prepares the datasets to be used in the brain class.
@@ -340,7 +340,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="exp_add_noise_test", config=hparams)
+    wandb.init(project="v2_debug", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(

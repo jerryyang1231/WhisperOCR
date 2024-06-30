@@ -16,6 +16,7 @@ Authors
 
 # my command
 # python train_v3_without_image.py hparams/test_only_v3.yaml --test_only
+# python train_v3_without_image.py hparams/finetune_whisper_v3.yaml 
 
 import logging
 import os
@@ -32,7 +33,8 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
-
+from zhconv import convert
+from utils import arabic_to_chinese
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +53,6 @@ class ASR(sb.Brain):
         # mel_clean's shape = [1, 80, 3000]
         mel_clean = self.modules.whisper._get_mel(wavs)
         mel_clean = mel_clean.to(self.device)
-
-        # id 的列表
-        ids = batch.id  # 注意這裡使用ids，而非單一id
               
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
@@ -136,7 +135,7 @@ class ASR(sb.Brain):
         self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
-            tokens, tokens_lens = batch.tokens             
+            tokens, tokens_lens = batch.tokens  
             if hasattr(self.hparams, "normalized_transcripts"):
                 # Decode token terms to words
                 predicted_words = [
@@ -146,10 +145,7 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
             else:
-                
                 # Decode token terms to words
                 predicted_words = [
                     self.tokenizer.decode(t, skip_special_tokens=True).strip()
@@ -158,11 +154,20 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
                 
+            # 使用列表解析去掉每個字串中的空格
+            target_words = [''.join(word.split()) for word in target_words]
+            
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
+            
+            # 將 predicted_words 中的每個句子轉換成繁體中文
+            predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
+            # 把阿拉伯數字轉成中文字
+            predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
+            
+            print("predicted_words :", predicted_words)
+            print("target_words :", target_words)
 
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -340,7 +345,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v2_debug", config=hparams)
+    wandb.init(project="v3", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(

@@ -7,7 +7,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>/test_clean
+output_folder: !ref results/whisper/<seed>/finetune_whisper_clean
 output_wer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -52,7 +52,7 @@ replacements: {'noise_folder': '/share/nas169/jerryyang/speechbrain/tests/sample
 ckpt_interval_minutes: 10 # save checkpoint every N min
 
 ############################## Training Parameters #############################
-freeze_whisper: True
+freeze_whisper: False
 number_of_epochs: 1
 weight_decay: 0.01
 lr_whisper: 1e-5

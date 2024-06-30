@@ -15,7 +15,8 @@ Authors
 """
 
 # my command
-# python whisper_clean.py hparams/whisper_clean.yaml --test_only
+# python test_clean_with_image.py hparams/freeze_whisper_train_fusion_clean.yaml 
+# python test_clean_with_image.py hparams/finetune_whisper_train_fusion_clean.yaml 
 
 import logging
 import os
@@ -32,7 +33,8 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
-
+# from zhconv import convert
+# from utils import arabic_to_chinese
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +50,23 @@ class ASR(sb.Brain):
         # 重新採樣
         wavs = resampler(wavs)
         
-        # mel's shape = [1, 80, 3000]
-        mel = self.modules.whisper._get_mel(wavs)
-        mel = mel.to(self.device)
+        # mel_clean's shape = [1, 80, 3000]
+        mel_clean = self.modules.whisper._get_mel(wavs)
+        mel_clean = mel_clean.to(self.device)
+       
+        # id 的列表
+        ids = batch.id  # 注意這裡使用ids，而非單一id
+        
+        # 使用提取的函數來獲取圖像路徑
+        image_paths = get_image_paths(ids, stage, self.hparams)       
+        
+        # 讀取圖片並轉換成張量
+        visual_inputs = [read_image(image_path) for image_path in image_paths]
+
+        # 將所有圖片張量堆疊成一個大張量
+        # visual_input's shape = [1, 3, 384, 384]
+        visual_input = torch.stack(visual_inputs)
+        visual_input = visual_input.to(self.device)
        
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
@@ -63,63 +79,60 @@ class ASR(sb.Brain):
         )
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
         
-        # Forward encoder + decoder
-        enc_out, logits, _ = self.modules.whisper(mel, bos_tokens)
-        log_probs = self.hparams.log_softmax(logits)
+        # 使用 FusionModule 進行特徵融合
+        fused_features = self.modules.fusion_module(mel_clean, visual_input)
+                
+        # training Forward encoder + decoder
+        enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
+        log_probs_clean = self.hparams.log_softmax(logits_clean)
         
         hyps = None
         if stage == sb.Stage.VALID:
             hyps, _, _, _ = self.hparams.valid_search(
-                enc_out.detach(), wav_lens
+                enc_out_clean.detach(), wav_lens
             )
         elif stage == sb.Stage.TEST:
             hyps, _, _, _ = self.hparams.test_search(
-                enc_out.detach(), wav_lens
+                enc_out_clean.detach(), wav_lens
             )
 
-        return log_probs, hyps, wav_lens
+        return log_probs_clean, hyps, wav_lens
+
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (log_probs, hyps, wav_lens) = predictions
+        (log_probs_clean, hyps, wav_lens) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
         loss = self.hparams.nll_loss(
-            log_probs, tokens_eos, length=tokens_eos_lens
+            log_probs_clean, tokens_eos, length=tokens_eos_lens
         )
         
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
-            if hasattr(self.hparams, "normalized_transcripts"):
-                # Decode token terms to words
-                predicted_words = [
-                    self.tokenizer.decode(t, skip_special_tokens=True, basic_normalize=True).strip()
+            # Decode token terms to words
+            predicted_words = [
+                self.tokenizer.decode(t, skip_special_tokens=True).strip()
                     for t in hyps
-                ]
-                # Convert indices to words
-                target_words = undo_padding(tokens, tokens_lens)
-                target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
-            else:
-                # Decode token terms to words
-                predicted_words = [
-                    self.tokenizer.decode(t, skip_special_tokens=True).strip()
-                    for t in hyps
-                ]
-                # Convert indices to words
-                target_words = undo_padding(tokens, tokens_lens)
-                target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
-                
+            ]
+            # Convert indices to words
+            target_words = undo_padding(tokens, tokens_lens)
+            target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
+            
+            # 使用列表解析去掉每個字串中的空格
+            # target_words = [''.join(word.split()) for word in target_words]
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
-
-            print("predicted_words :", predicted_words)
-            print("target_words :", target_words)
+            
+            # 將 predicted_words 中的每個句子轉換成繁體中文
+            # predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
+            # 將 predicted_words 中的阿拉伯數字轉成中文字
+            # predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
+            
+            # print("predicted_words :", predicted_words)
+            # print("target_words :", target_words)
             
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -188,10 +201,7 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per step
             wandb.log({
-                "batch_train_loss": self.ob_loss.item(),
-                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
-                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
-                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+                "batch_train_loss": loss.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -260,9 +270,6 @@ def dataio_prepare(hparams, tokenizer):
         "wrd", "tokens_list", "tokens_bos", "tokens_eos", "tokens"
     )
     def text_pipeline(wrd):
-        if hasattr(hparams, "normalized_transcripts"):
-            # 列出tokenizer的方法也沒有normlaize這個方法，應該沒有跑到這行。
-            wrd = tokenizer.normalize(wrd)
         yield wrd
         tokens_list = tokenizer.encode(wrd, add_special_tokens=False)
         yield tokens_list
@@ -297,7 +304,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v2_debug", config=hparams)
+    wandb.init(project="v4", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(
@@ -318,8 +325,6 @@ if __name__ == "__main__":
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
-            # "merge_lst": hparams["train_splits"],
-            # "merge_name": "train.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )
@@ -339,10 +344,10 @@ if __name__ == "__main__":
         opt_class=hparams["whisper_opt_class"],
     )
     
-    # # We load the pretrained whisper model
-    # if "pretrainer" in hparams.keys():
-    #     run_on_main(hparams["pretrainer"].collect_files)
-    #     hparams["pretrainer"].load_collected(asr_brain.device)
+    # We load the pretrained whisper model
+    if "pretrainer" in hparams.keys():
+        run_on_main(hparams["pretrainer"].collect_files)
+        hparams["pretrainer"].load_collected()
 
     # We dynamically add the tokenizer to our brain class.
     # NB: This tokenizer corresponds to the one used for Whisper.

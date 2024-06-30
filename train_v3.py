@@ -15,7 +15,8 @@ Authors
 """
 
 # my command
-# python train_v2.py hparams/finetune_whisper_train_fusion_v2.yaml
+# python train_v3.py hparams/freeze_whisper_train_fusion_v3.yaml
+# python train_v3.py hparams/finetune_whisper_train_fusion_v3.yaml
 
 import logging
 import os
@@ -32,7 +33,8 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
-
+from zhconv import convert
+from utils import arabic_to_chinese
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +162,6 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
             else:
                 # Decode token terms to words
                 predicted_words = [
@@ -171,11 +171,17 @@ class ASR(sb.Brain):
                 # Convert indices to words
                 target_words = undo_padding(tokens, tokens_lens)
                 target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
-                # 使用列表解析去掉每個字串中的空格
-                target_words = [''.join(word.split()) for word in target_words]
                 
+            # 使用列表解析去掉每個字串中的空格
+            target_words = [''.join(word.split()) for word in target_words] 
+            
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
+            
+            # 將 predicted_words 中的每個句子轉換成繁體中文
+            predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
+            # 把阿拉伯數字轉成中文字
+            predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
 
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -353,7 +359,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v2_debug", config=hparams)
+    wandb.init(project="v3", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(
@@ -374,8 +380,6 @@ if __name__ == "__main__":
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
-            # "merge_lst": hparams["train_splits"],
-            # "merge_name": "train.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )
@@ -394,11 +398,6 @@ if __name__ == "__main__":
         checkpointer=hparams["checkpointer"],
         opt_class=hparams["whisper_opt_class"],
     )
-    
-    # # We load the pretrained whisper model
-    # if "pretrainer" in hparams.keys():
-    #     run_on_main(hparams["pretrainer"].collect_files)
-    #     hparams["pretrainer"].load_collected(asr_brain.device)
 
     # We dynamically add the tokenizer to our brain class.
     # NB: This tokenizer corresponds to the one used for Whisper.

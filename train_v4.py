@@ -15,8 +15,8 @@ Authors
 """
 
 # my command
-# python test_clean_with_image.py hparams/freeze_whisper_train_fusion_clean.yaml 
-# python test_clean_with_image.py hparams/finetune_whisper_train_fusion_clean.yaml 
+# python train_v4.py hparams/test_only_noisy.yaml --test_only
+# python train_v4.py hparams/finetune_whisper_noisy.yaml 
 
 import logging
 import os
@@ -33,8 +33,6 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
-# from zhconv import convert
-# from utils import arabic_to_chinese
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +51,31 @@ class ASR(sb.Brain):
         # mel_clean's shape = [1, 80, 3000]
         mel_clean = self.modules.whisper._get_mel(wavs)
         mel_clean = mel_clean.to(self.device)
-       
-        # id 的列表
-        ids = batch.id  # 注意這裡使用ids，而非單一id
         
-        # 使用提取的函數來獲取圖像路徑
-        image_paths = get_image_paths(ids, stage, self.hparams)       
-        
-        # 讀取圖片並轉換成張量
-        visual_inputs = [read_image(image_path) for image_path in image_paths]
-
-        # 將所有圖片張量堆疊成一個大張量
-        # visual_input's shape = [1, 3, 384, 384]
-        visual_input = torch.stack(visual_inputs)
-        visual_input = visual_input.to(self.device)
-       
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
+        # # Add waveform augmentation if specified.
+        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        #     print("Before augmentation:", wavs)
+        #     wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
+        #     print("After augmentation:", wavs)
+        #     bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
+        #     bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
+        #         bos_tokens_lens
+        #     )
+        
+        # Add waveform augmentation if specified.
+        if hasattr(self.hparams, "wav_augment"):
+            wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
+            bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
+            bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
+                bos_tokens_lens
+            )
+        
+        # mel_noisy's shape = [1, 80, 3000]
+        mel_noisy = self.modules.whisper._get_mel(wavs)
+        mel_noisy = mel_noisy.to(self.device)
+    
         # We compute the padding mask and replace the values with the pad_token_id
         # that the Whisper decoder expect to see.
         abs_tokens_lens = (bos_tokens_lens * bos_tokens.shape[1]).long()
@@ -79,61 +85,82 @@ class ASR(sb.Brain):
         )
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
         
-        # 使用 FusionModule 進行特徵融合
-        fused_features = self.modules.fusion_module(mel_clean, visual_input)
-                
         # training Forward encoder + decoder
+        enc_out_noisy, logits_noisy, _ = self.modules.whisper(mel_noisy, bos_tokens)
+        
+        # target generator Forward encoder + decoder
         enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
-        log_probs_clean = self.hparams.log_softmax(logits_clean)
         
         hyps = None
         if stage == sb.Stage.VALID:
             hyps, _, _, _ = self.hparams.valid_search(
-                enc_out_clean.detach(), wav_lens
+                enc_out_noisy.detach(), wav_lens
             )
         elif stage == sb.Stage.TEST:
             hyps, _, _, _ = self.hparams.test_search(
-                enc_out_clean.detach(), wav_lens
+                enc_out_noisy.detach(), wav_lens
             )
 
-        return log_probs_clean, hyps, wav_lens
+        return logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (log_probs_clean, hyps, wav_lens) = predictions
+        (logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
-        loss = self.hparams.nll_loss(
-            log_probs_clean, tokens_eos, length=tokens_eos_lens
-        )
+        # # Label Augmentation
+        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
+        #     tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
+        #         tokens_eos_lens
+        #     )
+        
+        # Label Augmentation
+        if hasattr(self.hparams, "wav_augment"):
+            tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
+            tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
+                tokens_eos_lens
+            )
+
+        Loss_mel = self.hparams.l1_loss(mel_noisy, mel_clean)
+        self.ob_Loss_mel = Loss_mel
+        
+        Loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
+        self.ob_Loss_enc = Loss_enc
+        
+        # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
+        target_class = torch.argmax(logits_clean, dim=-1)
+        
+        # 將 logits_noisy 轉換為 [batch_size * seq_len, num_classes] 的形狀
+        logits_noisy_flat = logits_noisy.view(-1, logits_noisy.size(2))
+        
+        # 將 target_class 轉換為 [batch_size * seq_len] 的形狀
+        target_class_flat = target_class.view(-1)
+        
+        # 計算 cross entropy loss
+        Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
+        self.ob_Loss_dec = Loss_dec
+        
+        loss = Loss_mel + 2 * Loss_enc + 2 * Loss_dec 
+        self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
-            tokens, tokens_lens = batch.tokens             
+            tokens, tokens_lens = batch.tokens   
             # Decode token terms to words
             predicted_words = [
                 self.tokenizer.decode(t, skip_special_tokens=True).strip()
-                    for t in hyps
+                for t in hyps
             ]
             # Convert indices to words
             target_words = undo_padding(tokens, tokens_lens)
             target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
             
-            # 使用列表解析去掉每個字串中的空格
-            # target_words = [''.join(word.split()) for word in target_words]
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
-            
-            # 將 predicted_words 中的每個句子轉換成繁體中文
-            # predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
-            # 將 predicted_words 中的阿拉伯數字轉成中文字
-            # predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
-            
-            # print("predicted_words :", predicted_words)
-            # print("target_words :", target_words)
-            
+
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
 
@@ -201,7 +228,10 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per step
             wandb.log({
-                "batch_train_loss": loss.item(),
+                "batch_train_loss": self.ob_loss.item(),
+                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
+                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
+                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -259,7 +289,7 @@ def dataio_prepare(hparams, tokenizer):
     @sb.utils.data_pipeline.takes("wav")
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
-        sig = sb.dataio.dataio.read_audio(wav)       
+        sig = sb.dataio.dataio.read_audio(wav)
         return sig
     
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
@@ -325,6 +355,8 @@ if __name__ == "__main__":
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
+            # "merge_lst": hparams["train_splits"],
+            # "merge_name": "train.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )

@@ -15,8 +15,8 @@ Authors
 """
 
 # my command
-# python train_v3.py hparams/freeze_whisper_train_fusion_v3.yaml
-# python train_v3.py hparams/finetune_whisper_train_fusion_v3.yaml
+# CUDA_VISIBLE_DEVICES=1 python train_fusion_v4.py hparams/freeze_whisper_train_fusion_noisy.yaml
+# CUDA_VISIBLE_DEVICES=1 python train_fusion_v4.py hparams/finetune_whisper_train_fusion_noisy.yaml
 
 import logging
 import os
@@ -70,8 +70,16 @@ class ASR(sb.Brain):
        
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
+        # # Add waveform augmentation if specified.
+        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        #     wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
+        #     bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
+        #     bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
+        #         bos_tokens_lens
+        #     )
+            
         # Add waveform augmentation if specified.
-        if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        if hasattr(self.hparams, "wav_augment"):
             wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
             bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
             bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
@@ -122,8 +130,15 @@ class ASR(sb.Brain):
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
+        # # Label Augmentation
+        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
+        #     tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
+        #         tokens_eos_lens
+        #     )
+        
         # Label Augmentation
-        if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
+        if hasattr(self.hparams, "wav_augment"):
             tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
             tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
                 tokens_eos_lens
@@ -153,35 +168,25 @@ class ASR(sb.Brain):
         
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
-            if hasattr(self.hparams, "normalized_transcripts"):
-                # Decode token terms to words
-                predicted_words = [
-                    self.tokenizer.decode(t, skip_special_tokens=True, basic_normalize=True).strip()
-                    for t in hyps
-                ]
-                # Convert indices to words
-                target_words = undo_padding(tokens, tokens_lens)
-                target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True, basic_normalize=True)
-            else:
-                # Decode token terms to words
-                predicted_words = [
-                    self.tokenizer.decode(t, skip_special_tokens=True).strip()
-                    for t in hyps
-                ]
-                # Convert indices to words
-                target_words = undo_padding(tokens, tokens_lens)
-                target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
+            # Decode token terms to words
+            predicted_words = [
+                self.tokenizer.decode(t, skip_special_tokens=True).strip()
+                for t in hyps
+            ]
+            # Convert indices to words
+            target_words = undo_padding(tokens, tokens_lens)
+            target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
                 
-            # 使用列表解析去掉每個字串中的空格
-            target_words = [''.join(word.split()) for word in target_words] 
+            # # 使用列表解析去掉每個字串中的空格
+            # target_words = [''.join(word.split()) for word in target_words] 
             
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
             
-            # 將 predicted_words 中的每個句子轉換成繁體中文
-            predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
-            # 把阿拉伯數字轉成中文字
-            predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
+            # # 將 predicted_words 中的每個句子轉換成繁體中文
+            # predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
+            # # 把阿拉伯數字轉成中文字
+            # predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
 
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -359,7 +364,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v3", config=hparams)
+    wandb.init(project="v4", config=hparams)
     
     # Create experiment directory
     sb.create_experiment_directory(
@@ -398,7 +403,12 @@ if __name__ == "__main__":
         checkpointer=hparams["checkpointer"],
         opt_class=hparams["whisper_opt_class"],
     )
-
+    
+    # We load the pretrained whisper model
+    if "pretrainer" in hparams.keys():
+        run_on_main(hparams["pretrainer"].collect_files)
+        hparams["pretrainer"].load_collected()
+    
     # We dynamically add the tokenizer to our brain class.
     # NB: This tokenizer corresponds to the one used for Whisper.
     asr_brain.tokenizer = tokenizer
@@ -411,7 +421,7 @@ if __name__ == "__main__":
         train_loader_kwargs=hparams["train_loader_kwargs"],
         valid_loader_kwargs=hparams["valid_loader_kwargs"],
     )
-
+    
     # Testing
     os.makedirs(hparams["output_wer_folder"], exist_ok=True)
 

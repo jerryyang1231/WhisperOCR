@@ -7,7 +7,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>/finetune_whisper_clean
+output_folder: !ref results/whisper/<seed>/clean/finetune_whisper_clean
 output_wer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -17,10 +17,6 @@ whisper_hub: openai/whisper-base
 whisper_folder: !ref <save_folder>/whisper_checkpoint
 pretrain_folder: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save
 whisper_file: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save/CKPT+2024-06-30+15-52-56+00/whisper.ckpt
-
-# Normalize the english inputs with
-# the same normalization done in the paper
-# normalized_transcripts: False
 
 # Data files
 data_folder: /share/nas169/jerryyang/corpus/mandarin # e,g./path/to/mandarin
@@ -59,8 +55,8 @@ lr_whisper: 1e-5
 warmup_steps: 500
 max_grad_norm: 2.0
 sorting: ascending
-precision: fp16 # bf16, fp16 or fp32
-eval_precision: fp16
+precision: fp32 # bf16, fp16 or fp32
+eval_precision: fp32
 sampling_rate: 16_000
 
 # With data_parallel batch_size is split into N jobs
@@ -74,11 +70,6 @@ grad_accumulation_factor: 1
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
 test_beam_size: 8
-
-# # AddNoise
-# sample_rate: 16000
-# num_workers: 4
-# snr: 10
 
 ####################### Model Parameters #######################################
 
@@ -150,13 +141,8 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
 
-# l1_loss: !name:speechbrain.nnet.losses.l1_loss
-
-# fusion_module: !new:modified_model.FusionModule
-
 modules:
     whisper: !ref <whisper>
-    # fusion_module: !ref <fusion_module>
 
 ############################## Decoding & optimiser ############################
 

@@ -16,7 +16,7 @@ Authors
 
 # my command
 # python train_fusion_clean.py hparams/freeze_whisper_train_fusion_clean.yaml 
-# CUDA_VISIBLE_DEVICES=1 python train_fusion_clean.py hparams/finetune_whisper_train_fusion_clean.yaml 
+# python train_fusion_clean.py hparams/finetune_whisper_train_fusion_clean.yaml 
 
 import logging
 import os
@@ -33,8 +33,6 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
-# from zhconv import convert
-# from utils import arabic_to_chinese
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +51,7 @@ class ASR(sb.Brain):
         # mel_clean's shape = [1, 80, 3000]
         mel_clean = self.modules.whisper._get_mel(wavs)
         mel_clean = mel_clean.to(self.device)
-       
+        
         # id 的列表
         ids = batch.id  # 注意這裡使用ids，而非單一id
         
@@ -81,7 +79,7 @@ class ASR(sb.Brain):
         
         # 使用 FusionModule 進行特徵融合
         fused_features = self.modules.fusion_module(mel_clean, visual_input)
-                
+        
         # training Forward encoder + decoder
         enc_out_clean, logits_clean, _ = self.modules.whisper(fused_features, bos_tokens)
         log_probs_clean = self.hparams.log_softmax(logits_clean)
@@ -96,19 +94,23 @@ class ASR(sb.Brain):
                 enc_out_clean.detach(), wav_lens
             )
 
-        return log_probs_clean, hyps, wav_lens
+        return log_probs_clean, hyps, wav_lens, mel_clean, fused_features
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (log_probs_clean, hyps, wav_lens) = predictions
+        (log_probs_clean, hyps, wav_lens, mel_clean, fused_features) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
-        loss = self.hparams.nll_loss(
+        self.loss_asr = self.hparams.nll_loss(
             log_probs_clean, tokens_eos, length=tokens_eos_lens
         )
+        
+        self.loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
+        
+        loss = 0.7 * self.loss_asr + 0.3 * self.loss_mel
         
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
@@ -121,18 +123,8 @@ class ASR(sb.Brain):
             target_words = undo_padding(tokens, tokens_lens)
             target_words = self.tokenizer.batch_decode(target_words, skip_special_tokens=True)
             
-            # 使用列表解析去掉每個字串中的空格
-            # target_words = [''.join(word.split()) for word in target_words]
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
-            
-            # 將 predicted_words 中的每個句子轉換成繁體中文
-            # predicted_words = [[convert(sentence, 'zh-tw') for sentence in sublist] for sublist in predicted_words]
-            # 將 predicted_words 中的阿拉伯數字轉成中文字
-            # predicted_words = [[arabic_to_chinese(word) for word in sentence] for sentence in predicted_words]
-            
-            # print("predicted_words :", predicted_words)
-            # print("target_words :", target_words)
             
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -202,6 +194,8 @@ class ASR(sb.Brain):
         if if_main_process():  # Only log once per step
             wandb.log({
                 "batch_train_loss": loss.item(),
+                "batch_asr_loss": self.loss_asr.item(), 
+                "batch_mel_loss": self.loss_mel.item(),
                 # "batch_train_Loss_mel": self.ob_Loss_mel.item(),
                 # "batch_train_Loss_enc": self.ob_Loss_enc.item(),
                 # "batch_train_Loss_dec": self.ob_Loss_dec.item(),

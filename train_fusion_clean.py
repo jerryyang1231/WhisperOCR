@@ -33,6 +33,8 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
+from PIL import Image
+os.environ["WANDB_DIR"] = "/share/nas169/jerryyang/AVfusion/wandb"
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +60,15 @@ class ASR(sb.Brain):
         # 使用提取的函數來獲取圖像路徑
         image_paths = get_image_paths(ids, stage, self.hparams)       
         
-        # 讀取圖片並轉換成張量
-        visual_inputs = [read_image(image_path) for image_path in image_paths]
+        # # 讀取圖片並轉換成張量
+        # visual_inputs = [read_image(image_path) for image_path in image_paths]
 
-        # 將所有圖片張量堆疊成一個大張量
-        # visual_input's shape = [1, 3, 384, 384]
-        visual_input = torch.stack(visual_inputs)
-        visual_input = visual_input.to(self.device)
+        visual_input = [Image.open(image_path).convert('RGB') for image_path in image_paths]
+        
+        # # 將所有圖片張量堆疊成一個大張量
+        # # visual_input's shape = [1, 3, 384, 384]
+        # visual_input = torch.stack(visual_inputs)
+        # visual_input = visual_input.to(self.device)
        
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
@@ -110,8 +114,11 @@ class ASR(sb.Brain):
         
         self.loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
         
-        loss = 0.7 * self.loss_asr + 0.3 * self.loss_mel
-        
+        # Combine losses with a weighting factor (adjust weight_asr and weight_mel as needed)
+        weight_asr = 0.1
+        weight_mel = 0.9
+        loss = weight_asr * self.loss_asr + weight_mel * self.loss_mel
+    
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
             # Decode token terms to words
@@ -150,13 +157,12 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per epoch
             if stage == sb.Stage.TRAIN:
-                wandb.log({"train_loss": stage_loss, "epoch": epoch})
+                wandb.log({"train_loss": stage_loss})
             elif stage == sb.Stage.VALID:
                 wandb.log({
                     "valid_loss": stage_loss,
                     "valid_CER": stage_stats["CER"],
                     "valid_WER": stage_stats["WER"],
-                    "epoch": epoch,
                     "learning_rate": self.hparams.lr_annealing_whisper.current_lr,
                 })
             elif stage == sb.Stage.TEST:
@@ -164,7 +170,6 @@ class ASR(sb.Brain):
                     "test_loss": stage_loss,
                     "test_CER": stage_stats["CER"],
                     "test_WER": stage_stats["WER"],
-                    "epoch": epoch,
                 })
         
         # Perform end-of-iteration things, like annealing, logging, etc.
@@ -193,12 +198,10 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per step
             wandb.log({
-                "batch_train_loss": loss.item(),
+                # "batch_train_loss": loss.item(),
                 "batch_asr_loss": self.loss_asr.item(), 
                 "batch_mel_loss": self.loss_mel.item(),
-                # "batch_train_Loss_mel": self.ob_Loss_mel.item(),
-                # "batch_train_Loss_enc": self.ob_Loss_enc.item(),
-                # "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+                "batch_total_loss": loss.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):

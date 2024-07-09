@@ -42,7 +42,7 @@ test_csv:
     - !ref <output_folder>/tt.csv
     # - !ref <output_folder>/test-other.csv
 
-image_folder: /share/nas169/jerryyang/corpus/mandarin/image
+image_folder: /share/nas169/jerryyang/corpus/mandarin/image/b_1
 
 # Data for augmentation
 data_folder_noise: /share/nas169/jerryyang/speechbrain/tests/samples/noise
@@ -150,7 +150,12 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 
 nll_loss: !name:speechbrain.nnet.losses.nll_loss
 
+l1_loss: !name:speechbrain.nnet.losses.l1_loss
+
 fusion_module: !new:fusion_module.FusionModule
+    embed_dim: 1280
+    num_layers: 12
+    num_heads: 8
 
 modules:
     whisper: !ref <whisper>

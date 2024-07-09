@@ -15,8 +15,8 @@ Authors
 """
 
 # my command
-# python train_v4.py hparams/test_only_noisy.yaml --test_only
-# python train_v4.py hparams/finetune_whisper_noisy.yaml 
+# python train_noisy.py hparams/test_only_noisy.yaml --test_only
+# python train_noisy.py hparams/finetune_whisper_noisy.yaml 
 
 import logging
 import os
@@ -33,6 +33,7 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
+os.environ["WANDB_DIR"] = "/share/nas169/jerryyang/AVfusion/wandb"
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class ASR(sb.Brain):
         
         # target generator Forward encoder + decoder
         enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
+        log_probs_clean = self.hparams.log_softmax(logits_clean)
         
         hyps = None
         if stage == sb.Stage.VALID:
@@ -91,23 +93,16 @@ class ASR(sb.Brain):
                 enc_out_noisy.detach(), wav_lens
             )
 
-        return logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy
+        return log_probs_clean, logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy) = predictions
+        (log_probs_clean, logits_clean, logits_noisy, hyps, wav_lens, mel_clean, mel_noisy, enc_out_clean, enc_out_noisy) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
-        
-        # # Label Augmentation
-        # if stage == sb.Stage.TRAIN and hasattr(self.hparams, "wav_augment"):
-        #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
-        #     tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
-        #         tokens_eos_lens
-        #     )
-        
+                
         # Label Augmentation
         if hasattr(self.hparams, "wav_augment"):
             tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
@@ -115,6 +110,11 @@ class ASR(sb.Brain):
                 tokens_eos_lens
             )
 
+        Loss_asr = self.hparams.nll_loss(
+            log_probs_clean, tokens_eos, length=tokens_eos_lens
+        )
+        self.ob_Loss_asr = Loss_asr
+        
         Loss_mel = self.hparams.l1_loss(mel_noisy, mel_clean)
         self.ob_Loss_mel = Loss_mel
         
@@ -134,7 +134,7 @@ class ASR(sb.Brain):
         Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
         self.ob_Loss_dec = Loss_dec
         
-        loss = Loss_mel + 2 * Loss_enc + 2 * Loss_dec 
+        loss = Loss_mel + Loss_enc + Loss_dec + Loss_asr
         self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
@@ -218,10 +218,11 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per step
             wandb.log({
-                "batch_train_loss": self.ob_loss.item(),
+                "batch_train_total_loss": self.ob_loss.item(),
                 "batch_train_Loss_mel": self.ob_Loss_mel.item(),
                 "batch_train_Loss_enc": self.ob_Loss_enc.item(),
                 "batch_train_Loss_dec": self.ob_Loss_dec.item(),
+                "batch_train_Loss_asr": self.ob_Loss_asr.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -345,8 +346,6 @@ if __name__ == "__main__":
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
-            # "merge_lst": hparams["train_splits"],
-            # "merge_name": "train.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )

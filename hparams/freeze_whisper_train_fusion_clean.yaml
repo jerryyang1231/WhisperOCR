@@ -18,10 +18,6 @@ whisper_folder: !ref <save_folder>/whisper_checkpoint
 pretrain_folder: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save
 whisper_file: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save/CKPT+2024-06-30+15-52-56+00/whisper.ckpt
 
-# Normalize the english inputs with
-# the same normalization done in the paper
-# normalized_transcripts: False
-
 # Data files
 data_folder: /share/nas169/jerryyang/corpus/mandarin # e,g./path/to/mandarin
 # train_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
@@ -42,7 +38,7 @@ test_csv:
     - !ref <output_folder>/tt.csv
     # - !ref <output_folder>/test-other.csv
 
-image_folder: /share/nas169/jerryyang/corpus/mandarin/image
+image_folder: /share/nas169/jerryyang/corpus/mandarin/image/b_1
 
 # Data for augmentation
 data_folder_noise: /share/nas169/jerryyang/speechbrain/tests/samples/noise

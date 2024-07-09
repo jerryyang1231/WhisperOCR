@@ -5,6 +5,11 @@ from torch.nn import LayerNorm
 from transformers import BeitImageProcessor, BeitModel
 from speechbrain.lobes.models.huggingface_transformers.whisper import Whisper
 
+# 自定義初始化函數
+def init_key_weights_zero(module):
+    if isinstance(module, nn.MultiheadAttention):
+        nn.init.constant_(module.in_proj_weight[module.embed_dim:2*module.embed_dim, :], 0)
+
 class ResidualBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, use_1x1conv=False, strides=1):
         super().__init__()
@@ -14,7 +19,7 @@ class ResidualBlock2D(nn.Module):
                                kernel_size=3, padding=1)
         
         if use_1x1conv:
-            self.conv3 = nn.Conv2d(input_channels, out_channels,
+            self.conv3 = nn.Conv2d(in_channels, out_channels,
                                    kernel_size=1, stride=strides)
         else:
             self.conv3 = None
@@ -64,6 +69,9 @@ class FusionModule(nn.Module):
             LayerNorm(embed_dim).to(self.device)
             for _ in range(num_layers)
         ])
+        
+        # 初始化 key 的權重為 0
+        self.apply(init_key_weights_zero)
         
     def forward(self, audio, visual):
         # 確保音頻和視覺輸入是 float32 類型
@@ -126,45 +134,17 @@ class FusionModule(nn.Module):
                     
         return fused_features
 
-# # 準備輸入數據
-# batch_size = 1
-# num_mels = 80
-# num_frames = 3000  
-# height = 384
-# width = 384
-# # 模擬 Mel 頻譜圖
-# audio_input = torch.randn(batch_size, num_mels, num_frames)  
-# # 模擬字幕圖
-# visual_input = torch.randn(batch_size, 3, height, width)
+# # 創建 FusionModule 的實例並檢查 key 權重
+# embed_dim = 1280
+# num_layers = 4
+# num_heads = 8
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# # 創建FusionModule實例
-# fusion_module = FusionModule()
+# model = FusionModule(embed_dim, num_layers, num_heads, device)
 
-# # 通過FusionModule進行特徵提取
-# fused_features = fusion_module(audio_input, visual_input)
-# print("fused_features' shape :", fused_features.shape)
+# # 獲取第一層 MultiheadAttention 的 key 權重
+# attention_layer = model.cross_attention_layers[0]
+# key_weights = attention_layer.in_proj_weight[attention_layer.embed_dim:2*attention_layer.embed_dim, :]
 
-# # 將fused_features和tokens移動到同一設備
-# fused_features = fused_features.to(fusion_module.device)
-
-# # 定義模型參數
-# model_hub = "openai/whisper-base" 
-# save_path = "/share/nas169/jerryyang/AVfusion/saved_model"  
-# sampling_rate = 16000
-
-# # 創建 Whisper 模型實例
-# model = Whisper(
-#     source=model_hub,
-#     save_path=save_path,
-#     sampling_rate=sampling_rate,
-# ).to(fusion_module.device)
-
-# # 準備輸入數據
-# tokens = torch.tensor([[1, 1]]) * model.model.config.decoder_start_token_id
-# tokens = tokens.to(fusion_module.device)
-
-# # 使用 FusionModule 的特徵作為 Whisper 模型的輸入
-# encoder_outputs, decoder_logits, _ = model.forward(fused_features, tokens)
-# print("encoder output's shape :",encoder_outputs.shape)
-# print("decoder logits :", decoder_logits)
-# print("decoder logits' shape :", decoder_logits.shape)
+# # 驗證 key 的權重是否全為 0
+# print("Key weights are all zeros:", torch.all(key_weights == 0).item())

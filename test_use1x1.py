@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.nn import LayerNorm
 from transformers import BeitImageProcessor, BeitModel
 from speechbrain.lobes.models.huggingface_transformers.whisper import Whisper
+from PIL import Image
 
 class ResidualBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, use_1x1conv=True, strides=1):
@@ -20,7 +21,7 @@ class ResidualBlock2D(nn.Module):
             self.conv3 = None
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.bn2 = nn.BatchNorm2d(out_channels)
-    
+        
     def forward(self, x):
         y = F.relu(self.bn1(self.conv1(x)))
         y = self.bn2(self.conv2(y))
@@ -28,14 +29,6 @@ class ResidualBlock2D(nn.Module):
             x = self.conv3(x)
         y += x
         return F.relu(y)
-    
-    # def forward(self, x):
-    #     x = F.relu(self.bn1(self.conv1(x)))
-    #     x = self.bn2(self.conv2(x))
-    #     if self.conv3:
-    #         x = self.conv3(x)
-    #     x += x
-    #     return F.relu(x)
 
 class FusionModule(nn.Module):
     def __init__(self, embed_dim, num_layers, num_heads, device='cuda'):
@@ -92,7 +85,6 @@ class FusionModule(nn.Module):
             audio_features = audio_features.permute(0, 2, 1)
             # print("audio_features' shape :", audio_features.shape)
             # [1, 3000, 1280]
-                      
             visual_inputs = self.image_processor(visual,
                                                 return_tensors="pt",
                                                 do_resize=True, 
@@ -134,23 +126,23 @@ class FusionModule(nn.Module):
                     
         return fused_features
 
-# # 準備輸入數據
-# batch_size = 1
-# num_mels = 80
-# num_frames = 3000  
-# height = 384
-# width = 384
-# # 模擬 Mel 頻譜圖
-# audio_input = torch.randn(batch_size, num_mels, num_frames)  
-# # 模擬字幕圖
-# visual_input = torch.randn(batch_size, 3, height, width)
+# 準備輸入數據
+batch_size = 1
+num_mels = 80
+num_frames = 3000  
 
-# # 創建FusionModule實例
-# fusion_module = FusionModule()
+# 模擬 Mel 頻譜圖
+audio_input = torch.randn(batch_size, num_mels, num_frames)  
 
-# # 通過FusionModule進行特徵提取
-# fused_features = fusion_module(audio_input, visual_input)
-# print("fused_features' shape :", fused_features.shape)
+image_path = '/share/nas169/jerryyang/corpus/mandarin/image/b_1/cv/SSB07370296.jpg'
+visual_input = Image.open(image_path).convert('RGB')
+
+# 創建FusionModule實例
+fusion_module = FusionModule(embed_dim = 1280, num_layers = 12, num_heads = 8)
+
+# 通過FusionModule進行特徵提取
+fused_features = fusion_module(audio_input, visual_input)
+print("fused_features' shape :", fused_features.shape)
 
 # # 將fused_features和tokens移動到同一設備
 # fused_features = fused_features.to(fusion_module.device)

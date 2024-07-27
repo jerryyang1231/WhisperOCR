@@ -15,8 +15,8 @@ Authors
 """
 
 # my command
-# python train_fusion_noisy.py hparams/freeze_whisper_train_fusion_noisy.yaml
-# python train_fusion_noisy.py hparams/finetune_whisper_train_fusion_noisy.yaml
+# python toy.py hparams/toy.yaml
+# python toy.py hparams/toy.yaml --test_only
 
 import logging
 import os
@@ -30,7 +30,7 @@ from hyperpyyaml import load_hyperpyyaml
 import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
-from speechbrain.dataio.dataio import get_image_paths
+from speechbrain.dataio.dataio import get_image_paths_from_tr
 from speechbrain.augment.time_domain import Resample
 import wandb 
 from PIL import Image
@@ -58,7 +58,7 @@ class ASR(sb.Brain):
         ids = batch.id  # 注意這裡使用ids，而非單一id
         
         # 使用提取的函數來獲取圖像路徑
-        image_paths = get_image_paths(ids, stage, self.hparams)       
+        image_paths = get_image_paths_from_tr(ids, self.hparams)       
         
         visual_input = [Image.open(image_path).convert('RGB') for image_path in image_paths]
        
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     # Initialize WandB
     wandb.init(project="v5", 
                config=hparams,
-               name="loss asr + loss mel + loss enc + loss dec 3 epoch",
+               name="1 hour data test evaluation",
     )
     
     # Create experiment directory

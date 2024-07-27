@@ -7,16 +7,18 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>/-10dB/test_only
-output_wer_folder: !ref <output_folder>/
+output_folder: !ref results/whisper/<seed>/20dB/test_only/loss_asr + loss_mel + loss_enc + loss_dec
+# output_wer_folder: !ref <output_folder>/
+output_cer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # URL for the biggest Fairseq english whisper model.
-whisper_hub: openai/whisper-base
+whisper_hub: openai/whisper-tiny
 whisper_folder: !ref <save_folder>/whisper_checkpoint
-pretrain_folder: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save
-whisper_file: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_clean/save/CKPT+2024-06-30+15-52-56+00/whisper.ckpt
+
+pretrain_folder: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_tiny/save
+whisper_file: /share/nas169/jerryyang/AVfusion/results/whisper/1986/pretrain_whisper_tiny/save/CKPT+2024-07-23+05-08-26+00/whisper.ckpt
 
 # Data files
 data_folder: /share/nas169/jerryyang/corpus/mandarin # e,g./path/to/mandarin
@@ -25,15 +27,13 @@ train_splits: ["tr"]
 # dev_splits: ["dev-clean"]
 dev_splits: ["cv"]
 # test_splits: ["dev-clean", "test-clean", "test-other"]
-test_splits: ["cv", "tt"]
+test_splits: ["tt"]
 skip_prep: False
 # train_csv: !ref <output_folder>/train.csv
 train_csv: !ref <output_folder>/tr.csv
 # valid_csv: !ref <output_folder>/dev-clean.csv
 valid_csv: !ref <output_folder>/cv.csv
 test_csv:
-    # - !ref <output_folder>/dev-clean.csv
-    - !ref <output_folder>/cv.csv
     # - !ref <output_folder>/test-clean.csv
     - !ref <output_folder>/tt.csv
     # - !ref <output_folder>/test-other.csv
@@ -49,7 +49,7 @@ ckpt_interval_minutes: 10 # save checkpoint every N min
 
 ############################## Training Parameters #############################
 freeze_whisper: True
-number_of_epochs: 1
+number_of_epochs: 5
 weight_decay: 0.01
 lr_whisper: 1e-5
 warmup_steps: 500
@@ -74,7 +74,7 @@ test_beam_size: 8
 # AddNoise
 sample_rate: 16000
 num_workers: 4
-snr: -10
+snr: 20
 
 ####################### Model Parameters #######################################
 
@@ -184,7 +184,7 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
     save_file: !ref <train_log>
 
-error_rate_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
+# error_rate_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
 
 cer_computer: !name:speechbrain.utils.metric_stats.ErrorRateStats
     split_tokens: True

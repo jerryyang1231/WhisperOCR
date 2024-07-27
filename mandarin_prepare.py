@@ -32,7 +32,6 @@ from speechbrain.utils.parallel import parallel_map
 import zhconv
 
 logger = logging.getLogger(__name__)
-# OPT_FILE = "opt_librispeech_prepare.pkl"
 OPT_FILE = "opt_mandarin_prepare.pkl"
 SAMPLERATE = 16000
 OPEN_SLR_11_LINK = "http://www.openslr.org/resources/11/"
@@ -153,17 +152,16 @@ def prepare_mandarin(
         
         create_csv(save_folder, wav_lst, text_dict, split, n_sentences)
 
-    # Merging csv file if needed
-    if merge_lst and merge_name is not None:
-        merge_files = [split_libri + ".csv" for split_libri in merge_lst]
-        merge_csvs(
-            data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name
-        )
+    # # Merging csv file if needed
+    # if merge_lst and merge_name is not None:
+    #     merge_files = [split_libri + ".csv" for split_libri in merge_lst]
+    #     merge_csvs(
+    #         data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name
+    #     )
 
-    # Create lexicon.csv and oov.csv
-    # 這行預設不會做，先不看
-    if create_lexicon:
-        create_lexicon_and_oov_csv(all_texts, save_folder)
+    # # Create lexicon.csv and oov.csv
+    # if create_lexicon:
+    #     create_lexicon_and_oov_csv(all_texts, save_folder)
 
     # saving options
     save_pkl(conf, save_opt)
@@ -287,8 +285,7 @@ def process_line(wav_file, text_dict) -> LSRow:
     base_name = file_name.replace(".wav", "")
     # 提取 snt_id, 根據例子 snt_id 是 _ 之前的部分
     snt_id = base_name.split("_")[0]
-    # 這邊speaker_id可能沒有取好，不過我所有音檔都是同一個人所以先暫時不管
-    spk_id = snt_id[-4]
+    spk_id = snt_id[:7]
     
     if snt_id not in text_dict:
         raise KeyError(f"Missing key: {snt_id} in text_dict")
@@ -416,7 +413,6 @@ def skip(splits, save_folder, conf):
         else:
             skip = False
 
-    # print("skip :", skip)
     return skip
 
 # 修改以符合aishell3 content.txt處理方式

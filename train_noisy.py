@@ -30,7 +30,6 @@ from hyperpyyaml import load_hyperpyyaml
 import speechbrain as sb
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import if_main_process, run_on_main
-from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
 os.environ["WANDB_DIR"] = "/share/nas169/jerryyang/AVfusion/wandb"
@@ -110,16 +109,16 @@ class ASR(sb.Brain):
                 tokens_eos_lens
             )
 
-        Loss_asr = self.hparams.nll_loss(
+        loss_asr = self.hparams.nll_loss(
             log_probs_clean, tokens_eos, length=tokens_eos_lens
         )
-        self.ob_Loss_asr = Loss_asr
+        self.ob_loss_asr = loss_asr
         
-        Loss_mel = self.hparams.l1_loss(mel_noisy, mel_clean)
-        self.ob_Loss_mel = Loss_mel
+        loss_mel = self.hparams.l1_loss(mel_noisy, mel_clean)
+        self.ob_loss_mel = loss_mel
         
-        Loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
-        self.ob_Loss_enc = Loss_enc
+        loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
+        self.ob_loss_enc = loss_enc
         
         # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
         target_class = torch.argmax(logits_clean, dim=-1)
@@ -131,10 +130,15 @@ class ASR(sb.Brain):
         target_class_flat = target_class.view(-1)
         
         # 計算 cross entropy loss
-        Loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
-        self.ob_Loss_dec = Loss_dec
+        loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
+        self.ob_loss_dec = loss_dec
         
-        loss = Loss_mel + Loss_enc + Loss_dec + Loss_asr
+        alpha = 1
+        beta = 1
+        gamma = 1
+        delta = 1
+        
+        loss = alpha * loss_asr + beta * loss_mel + gamma * loss_enc + delta * loss_dec
         self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
@@ -151,7 +155,7 @@ class ASR(sb.Brain):
             predicted_words = [text.split(" ") for text in predicted_words]
             target_words = [text.split(" ") for text in target_words]
 
-            self.wer_metric.append(ids, predicted_words, target_words)
+            # self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
 
         return loss
@@ -160,7 +164,7 @@ class ASR(sb.Brain):
         """Gets called at the beginning of each epoch"""
         if stage != sb.Stage.TRAIN:
             self.cer_metric = self.hparams.cer_computer()
-            self.wer_metric = self.hparams.error_rate_computer()
+            # self.wer_metric = self.hparams.error_rate_computer()
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch."""
@@ -170,26 +174,22 @@ class ASR(sb.Brain):
             self.train_stats = stage_stats
         else:
             stage_stats["CER"] = self.cer_metric.summarize("error_rate")
-            stage_stats["WER"] = self.wer_metric.summarize("error_rate")
+            # stage_stats["WER"] = self.wer_metric.summarize("error_rate")
 
         # Log to WandB
         if if_main_process():  # Only log once per epoch
             if stage == sb.Stage.TRAIN:
-                wandb.log({"train_loss": stage_loss, "epoch": epoch})
+                wandb.log({"train_loss": stage_loss,
+                })
             elif stage == sb.Stage.VALID:
                 wandb.log({
                     "valid_loss": stage_loss,
                     "valid_CER": stage_stats["CER"],
-                    "valid_WER": stage_stats["WER"],
-                    "epoch": epoch,
-                    "learning_rate": self.hparams.lr_annealing_whisper.current_lr,
                 })
             elif stage == sb.Stage.TEST:
                 wandb.log({
                     "test_loss": stage_loss,
                     "test_CER": stage_stats["CER"],
-                    "test_WER": stage_stats["WER"],
-                    "epoch": epoch,
                 })
         
         # Perform end-of-iteration things, like annealing, logging, etc.
@@ -200,9 +200,10 @@ class ASR(sb.Brain):
                 train_stats=self.train_stats,
                 valid_stats=stage_stats,
             )
+            # 改成留CER最低的
             self.checkpointer.save_and_keep_only(
-                meta={"WER": stage_stats["WER"]},
-                min_keys=["WER"],
+                meta={"CER": stage_stats["CER"]},
+                min_keys=["CER"],
             )
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
@@ -210,8 +211,10 @@ class ASR(sb.Brain):
                 test_stats=stage_stats,
             )
             if if_main_process():
-                with open(self.hparams.test_wer_file, "w") as w:
-                    self.wer_metric.write_stats(w)
+                # with open(self.hparams.test_wer_file, "w") as w:
+                #     self.wer_metric.write_stats(w)
+                with open(self.hparams.test_cer_file, "w") as w:
+                    self.cer_metric.write_stats(w)
         
     def on_fit_batch_end(self, batch, outputs, loss, should_step):     
         
@@ -219,10 +222,10 @@ class ASR(sb.Brain):
         if if_main_process():  # Only log once per step
             wandb.log({
                 "batch_train_total_loss": self.ob_loss.item(),
-                "batch_train_Loss_mel": self.ob_Loss_mel.item(),
-                "batch_train_Loss_enc": self.ob_Loss_enc.item(),
-                "batch_train_Loss_dec": self.ob_Loss_dec.item(),
-                "batch_train_Loss_asr": self.ob_Loss_asr.item(),
+                "batch_train_loss_asr": self.ob_loss_asr.item(),
+                "batch_train_loss_mel": self.ob_loss_mel.item(),
+                "batch_train_loss_enc": self.ob_loss_enc.item(),
+                "batch_train_loss_dec": self.ob_loss_dec.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -325,7 +328,9 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v4", config=hparams)
+    wandb.init(project="v5",
+               config=hparams,
+               name="loss asr + loss mel + loss enc + loss dec test only")
     
     # Create experiment directory
     sb.create_experiment_directory(
@@ -384,14 +389,14 @@ if __name__ == "__main__":
     )
 
     # Testing
-    os.makedirs(hparams["output_wer_folder"], exist_ok=True)
+    os.makedirs(hparams["output_cer_folder"], exist_ok=True)
 
     for k in test_datasets.keys():  # keys are test_clean, test_other etc
-        asr_brain.hparams.test_wer_file = os.path.join(
-            hparams["output_wer_folder"], f"wer_{k}.txt"
+        asr_brain.hparams.test_cer_file = os.path.join(
+            hparams["output_cer_folder"], f"cer_{k}.txt"
         )
         asr_brain.evaluate(
             test_datasets[k],
             test_loader_kwargs=hparams["test_loader_kwargs"],
-            min_key="WER",
+            min_key="CER",
         )

@@ -17,6 +17,7 @@ Authors
 # my command
 # python train_clean.py hparams/test_only_clean.yaml --test_only
 # python train_clean.py hparams/finetune_whisper_clean.yaml
+# python train_clean.py hparams/pretrain_whisper_tiny.yaml
 
 import logging
 import os
@@ -33,6 +34,7 @@ from speechbrain.utils.distributed import if_main_process, run_on_main
 from speechbrain.dataio.dataio import get_image_paths, read_image
 from speechbrain.augment.time_domain import Resample
 import wandb 
+os.environ["WANDB_DIR"] = "/share/nas169/jerryyang/AVfusion/wandb"
 
 logger = logging.getLogger(__name__)
 
@@ -129,21 +131,17 @@ class ASR(sb.Brain):
         # Log to WandB
         if if_main_process():  # Only log once per epoch
             if stage == sb.Stage.TRAIN:
-                wandb.log({"train_loss": stage_loss, "epoch": epoch})
+                wandb.log({"train_loss": stage_loss,
+                })
             elif stage == sb.Stage.VALID:
                 wandb.log({
                     "valid_loss": stage_loss,
                     "valid_CER": stage_stats["CER"],
-                    "valid_WER": stage_stats["WER"],
-                    "epoch": epoch,
-                    "learning_rate": self.hparams.lr_annealing_whisper.current_lr,
                 })
             elif stage == sb.Stage.TEST:
                 wandb.log({
                     "test_loss": stage_loss,
                     "test_CER": stage_stats["CER"],
-                    "test_WER": stage_stats["WER"],
-                    "epoch": epoch,
                 })
         
         # Perform end-of-iteration things, like annealing, logging, etc.
@@ -155,8 +153,8 @@ class ASR(sb.Brain):
                 valid_stats=stage_stats,
             )
             self.checkpointer.save_and_keep_only(
-                meta={"WER": stage_stats["WER"]},
-                min_keys=["WER"],
+                meta={"CER": stage_stats["CER"]},
+                min_keys=["CER"],
             )
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
@@ -173,7 +171,6 @@ class ASR(sb.Brain):
         if if_main_process():  # Only log once per step
             wandb.log({
                 "batch_train_loss": loss.item(),
-                # "learning_rate": self.hparams.lr_annealing_whisper.current_lr,
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -276,7 +273,10 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Initialize WandB
-    wandb.init(project="v4", config=hparams)
+    wandb.init(project="v5",
+               config=hparams,
+               name="pretrain whisper tiny",
+    )
     
     # Create experiment directory
     sb.create_experiment_directory(

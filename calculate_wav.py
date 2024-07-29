@@ -1,100 +1,152 @@
 # import os
 # import wave
-# import contextlib
 
-# # 計算音檔時長並返回秒數
-# def get_duration(file_path):
-#     with contextlib.closing(wave.open(file_path, 'r')) as f:
-#         frames = f.getnframes()
-#         rate = f.getframerate()
-#         duration = frames / float(rate)
-#         return duration
+# # 定義資料夾路徑
+# train_wav_path = "/share/nas169/jerryyang/corpus/aishell3/train/wav"
 
-# def format_duration(seconds):
-#     mins, secs = divmod(seconds, 60)
-#     hours, mins = divmod(mins, 60)
-#     return int(hours), int(mins), int(secs)
+# # 初始化變數
+# total_duration = 0
+# target_duration = 3600  # 1 小時的秒數
+# final_file = None
+# final_folder = None
 
-# # 指定資料夾路徑
-# folder_path = '/share/nas169/jerryyang/corpus/mandarin/clean/tr'
+# # 遍歷資料夾及音檔
+# for folder in os.listdir(train_wav_path):
+#     folder_path = os.path.join(train_wav_path, folder)
+#     if os.path.isdir(folder_path):
+#         for wav_file in os.listdir(folder_path):
+#             if wav_file.endswith('.wav'):
+#                 wav_path = os.path.join(folder_path, wav_file)
+#                 # 打開音檔並計算時間
+#                 with wave.open(wav_path, 'r') as wf:
+#                     frames = wf.getnframes()
+#                     rate = wf.getframerate()
+#                     duration = frames / float(rate)
+#                     total_duration += duration
+#                     # 檢查是否已達到目標時間
+#                     if total_duration >= target_duration:
+#                         final_file = wav_file
+#                         final_folder = folder
+#                         break
+#     if total_duration >= target_duration:
+#         break
 
-# # 初始化總時長為 0
-# total_duration = 0.0
-# target_duration = 3600  # 目標時長為 3600 秒 (1 小時)
-# selected_files = []
+# if final_file and final_folder:
+#     print(f"累計時間達到 1 小時的最後一個檔案是：{final_folder}/{final_file}")
+# else:
+#     print("累計時間未達 1 小時。")
 
-# # 遍歷資料夾中的所有檔案並累加時長直到接近目標時長
-# for filename in os.listdir(folder_path):
-#     if filename.endswith('.wav'):
-#         file_path = os.path.join(folder_path, filename)
-#         duration = get_duration(file_path)
-        
-#         # 累加時長並記錄檔名
-#         if total_duration + duration <= target_duration:
-#             selected_files.append(filename)
-#             total_duration += duration
+# import os
+# import wave
 
-# # 格式化總時長
-# hours, minutes, seconds = format_duration(total_duration)
+# # 定義資料夾路徑
+# train_wav_path = "/share/nas169/jerryyang/corpus/aishell3/train/wav"
 
-# # 輸出選擇的檔案和總時長
-# print(f"選擇的音檔如下（總時長約為 {hours} 小時 {minutes} 分鐘 {seconds} 秒）：")
-# for file in selected_files:
-#     print(file)
+# # 初始化變數
+# total_duration_with_SSB0057 = 0
+# total_duration_without_SSB0057 = 0
+# target_duration = 3600  # 1 小時的秒數
+# found_SSB0057 = False
+
+# # 遍歷資料夾及音檔
+# for folder in os.listdir(train_wav_path):
+#     folder_path = os.path.join(train_wav_path, folder)
+#     if os.path.isdir(folder_path):
+#         for wav_file in os.listdir(folder_path):
+#             if wav_file.endswith('.wav'):
+#                 wav_path = os.path.join(folder_path, wav_file)
+#                 # 打開音檔並計算時間
+#                 with wave.open(wav_path, 'r') as wf:
+#                     frames = wf.getnframes()
+#                     rate = wf.getframerate()
+#                     duration = frames / float(rate)
+#                     total_duration_with_SSB0057 += duration
+#                     if folder != 'SSB0057':
+#                         total_duration_without_SSB0057 += duration
+#                     else:
+#                         found_SSB0057 = True
+#     if found_SSB0057:
+#         break
+
+# print(f"加上 SSB0057 的所有音檔的累積時間是：{total_duration_with_SSB0057 / 3600:.2f} 小時")
+# print(f"不加 SSB0057 的所有音檔的累積時間是：{total_duration_without_SSB0057 / 3600:.2f} 小時")
+
+# import os
+# import wave
+
+# # 定義資料夾路徑
+# train_wav_path = "/share/nas169/jerryyang/corpus/aishell3/train/wav"
+
+# # 初始化變數
+# total_duration_with_SSB0057 = 0
+# total_duration_without_SSB0057 = 0
+# target_duration = 3600  # 1 小時的秒數
+# found_SSB0057 = False
+# folder_list = []
+
+# # 遍歷資料夾及音檔
+# for folder in sorted(os.listdir(train_wav_path)):
+#     folder_path = os.path.join(train_wav_path, folder)
+#     if os.path.isdir(folder_path):
+#         folder_list.append(folder)
+#         for wav_file in os.listdir(folder_path):
+#             if wav_file.endswith('.wav'):
+#                 wav_path = os.path.join(folder_path, wav_file)
+#                 # 打開音檔並計算時間
+#                 with wave.open(wav_path, 'r') as wf:
+#                     frames = wf.getnframes()
+#                     rate = wf.getframerate()
+#                     duration = frames / float(rate)
+#                     total_duration_with_SSB0057 += duration
+#                     if folder != 'SSB0057':
+#                         total_duration_without_SSB0057 += duration
+#                     else:
+#                         found_SSB0057 = True
+#         if found_SSB0057:
+#             break
+
+# print(f"到 SSB0057 之前的所有資料夾（包含 SSB0057）：{folder_list}")
+# print(f"加上 SSB0057 的所有音檔的累積時間是：{total_duration_with_SSB0057 / 3600:.2f} 小時")
+# print(f"不加 SSB0057 的所有音檔的累積時間是：{total_duration_without_SSB0057 / 3600:.2f} 小時")
 
 import os
 import wave
-import contextlib
-import shutil
 
-# 計算音檔時長並返回秒數
-def get_duration(file_path):
-    with contextlib.closing(wave.open(file_path, 'r')) as f:
-        frames = f.getnframes()
-        rate = f.getframerate()
-        duration = frames / float(rate)
-        return duration
+def calculate_audio_duration(base_path, target_folder, target_duration=3600):
+    # 初始化變數
+    total_duration_with_target = 0
+    total_duration_without_target = 0
+    found_target = False
+    folder_list = []
 
-def format_duration(seconds):
-    mins, secs = divmod(seconds, 60)
-    hours, mins = divmod(mins, 60)
-    return int(hours), int(mins), int(secs)
+    # 遍歷資料夾及音檔
+    for folder in sorted(os.listdir(base_path)):
+        folder_path = os.path.join(base_path, folder)
+        if os.path.isdir(folder_path):
+            folder_list.append(folder)
+            for wav_file in os.listdir(folder_path):
+                if wav_file.endswith('.wav'):
+                    wav_path = os.path.join(folder_path, wav_file)
+                    # 打開音檔並計算時間
+                    with wave.open(wav_path, 'r') as wf:
+                        frames = wf.getnframes()
+                        rate = wf.getframerate()
+                        duration = frames / float(rate)
+                        total_duration_with_target += duration
+                        if folder != target_folder:
+                            total_duration_without_target += duration
+                        else:
+                            found_target = True
+            if found_target:
+                break
 
-# 指定來源資料夾和目標資料夾路徑
-source_folder = '/share/nas169/jerryyang/corpus/mandarin/clean/tr'
-target_folder = '/share/nas169/jerryyang/corpus/mandarin/clean/tr_subset'
+    print(f"到 {target_folder} 之前的所有資料夾（包含 {target_folder}）：{folder_list}")
+    print(f"加上 {target_folder} 的所有音檔的累積時間是：{total_duration_with_target / 3600:.2f} 小時")
+    print(f"不加 {target_folder} 的所有音檔的累積時間是：{total_duration_without_target / 3600:.2f} 小時")
 
-# 確認目標資料夾存在，若不存在則建立
-if not os.path.exists(target_folder):
-    os.makedirs(target_folder)
+# 使用範例
+base_path = "/share/nas169/jerryyang/corpus/aishell3/test/wav"
+target_folder = "SSB0057"
+calculate_audio_duration(base_path, target_folder)
 
-# 初始化總時長為 0
-total_duration = 0.0
-target_duration = 3600  # 目標時長為 3600 秒 (1 小時)
-selected_files = []
-
-# 遍歷來源資料夾中的所有檔案並累加時長直到接近目標時長
-for filename in os.listdir(source_folder):
-    if filename.endswith('.wav'):
-        file_path = os.path.join(source_folder, filename)
-        duration = get_duration(file_path)
-        
-        # 累加時長並記錄檔名
-        if total_duration + duration <= target_duration:
-            selected_files.append(filename)
-            total_duration += duration
-
-# 格式化總時長
-hours, minutes, seconds = format_duration(total_duration)
-
-# 複製選擇的檔案到目標資料夾
-for file in selected_files:
-    source_path = os.path.join(source_folder, file)
-    target_path = os.path.join(target_folder, file)
-    shutil.copyfile(source_path, target_path)
-
-# 輸出選擇的檔案和總時長
-print(f"選擇的音檔如下（總時長約為 {hours} 小時 {minutes} 分鐘 {seconds} 秒）：")
-for file in selected_files:
-    print(file)
 

@@ -15,8 +15,8 @@ Authors
 """
 
 # my command
-# python train_fusion_noisy.py hparams/freeze_whisper_train_fusion_noisy.yaml
-# python train_fusion_noisy.py hparams/finetune_whisper_train_fusion_noisy.yaml
+# python train_aishell3.py hparams/train_aishell3.yaml --test_only
+# python train_aishell3.py hparams/train_aishell3.yaml
 
 import logging
 import os
@@ -57,24 +57,24 @@ class ASR(sb.Brain):
         # id 的列表
         ids = batch.id  # 注意這裡使用ids，而非單一id
         
-        # 使用提取的函數來獲取圖像路徑
-        image_paths = get_image_paths(ids, stage, self.hparams)       
+        # # 使用提取的函數來獲取圖像路徑
+        # image_paths = get_image_paths(ids, stage, self.hparams)       
         
-        visual_input = [Image.open(image_path).convert('RGB') for image_path in image_paths]
+        # visual_input = [Image.open(image_path).convert('RGB') for image_path in image_paths]
        
         bos_tokens, bos_tokens_lens = batch.tokens_bos
         
-        # Add waveform augmentation if specified.
-        if hasattr(self.hparams, "wav_augment"):
-            wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
-            bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
-            bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
-                bos_tokens_lens
-            )
+        # # Add waveform augmentation if specified.
+        # if hasattr(self.hparams, "wav_augment"):
+        #     wavs, wav_lens = self.hparams.wav_augment(wavs, wav_lens)
+        #     bos_tokens = self.hparams.wav_augment.replicate_labels(bos_tokens)
+        #     bos_tokens_lens = self.hparams.wav_augment.replicate_labels(
+        #         bos_tokens_lens
+        #     )
         
-        # mel_noisy's shape = [1, 80, 3000]
-        mel_noisy = self.modules.whisper._get_mel(wavs)
-        mel_noisy = mel_noisy.to(self.device)
+        # # mel_noisy's shape = [1, 80, 3000]
+        # mel_noisy = self.modules.whisper._get_mel(wavs)
+        # mel_noisy = mel_noisy.to(self.device)
         
         # We compute the padding mask and replace the values with the pad_token_id
         # that the Whisper decoder expect to see.
@@ -85,11 +85,11 @@ class ASR(sb.Brain):
         )
         bos_tokens[~pad_mask] = self.tokenizer.pad_token_id
       
-        # 使用 FusionModule 進行特徵融合
-        fused_features = self.modules.fusion_module(mel_noisy, visual_input)
+        # # 使用 FusionModule 進行特徵融合
+        # fused_features = self.modules.fusion_module(mel_noisy, visual_input)
         
-        # training Forward encoder + decoder
-        enc_out_noisy, logits_noisy, _ = self.modules.whisper(fused_features, bos_tokens)
+        # # training Forward encoder + decoder
+        # enc_out_noisy, logits_noisy, _ = self.modules.whisper(fused_features, bos_tokens)
         
         # target generator Forward encoder + decoder
         enc_out_clean, logits_clean, _ = self.modules.whisper(mel_clean, bos_tokens)
@@ -98,61 +98,65 @@ class ASR(sb.Brain):
         hyps = None
         if stage == sb.Stage.VALID:
             hyps, _, _, _ = self.hparams.valid_search(
-                enc_out_noisy.detach(), wav_lens
+                enc_out_clean.detach(), wav_lens
             )
         elif stage == sb.Stage.TEST:
             hyps, _, _, _ = self.hparams.test_search(
-                enc_out_noisy.detach(), wav_lens
+                enc_out_clean.detach(), wav_lens
             )
 
-        return log_probs_clean, logits_clean, logits_noisy, hyps, wav_lens, mel_clean, fused_features, enc_out_clean, enc_out_noisy
+        return log_probs_clean, hyps, wav_lens
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss NLL given predictions and targets."""
 
-        (log_probs_clean, logits_clean, logits_noisy, hyps, wav_lens, mel_clean, fused_features, enc_out_clean, enc_out_noisy) = predictions
+        (log_probs_clean, hyps, wav_lens) = predictions
         batch = batch.to(self.device)
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         
-        # Label Augmentation
-        if hasattr(self.hparams, "wav_augment"):
-            tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
-            tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
-                tokens_eos_lens
-            )
-        
-        loss_asr = self.hparams.nll_loss(
+        loss = self.hparams.nll_loss(
             log_probs_clean, tokens_eos, length=tokens_eos_lens
         )
-        self.ob_loss_asr = loss_asr
         
-        loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
-        self.ob_loss_mel = loss_mel
+        # # Label Augmentation
+        # if hasattr(self.hparams, "wav_augment"):
+        #     tokens_eos = self.hparams.wav_augment.replicate_labels(tokens_eos)
+        #     tokens_eos_lens = self.hparams.wav_augment.replicate_labels(
+        #         tokens_eos_lens
+        #     )
         
-        loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
-        self.ob_loss_enc = loss_enc
+        # loss_asr = self.hparams.nll_loss(
+        #     log_probs_clean, tokens_eos, length=tokens_eos_lens
+        # )
+        # self.ob_loss_asr = loss_asr
         
-        # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
-        target_class = torch.argmax(logits_clean, dim=-1)
+        # loss_mel = self.hparams.l1_loss(fused_features, mel_clean)
+        # self.ob_loss_mel = loss_mel
         
-        # 將 logits_noisy 轉換為 [batch_size * seq_len, num_classes] 的形狀
-        logits_noisy_flat = logits_noisy.view(-1, logits_noisy.size(2))
+        # loss_enc = self.hparams.l1_loss(enc_out_noisy, enc_out_clean)
+        # self.ob_loss_enc = loss_enc
         
-        # 將 target_class 轉換為 [batch_size * seq_len] 的形狀
-        target_class_flat = target_class.view(-1)
+        # # 修改 logits_clean 以進行 one-hot 編碼並計算 target class
+        # target_class = torch.argmax(logits_clean, dim=-1)
         
-        # 計算 cross entropy loss
-        loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
-        self.ob_loss_dec = loss_dec
+        # # 將 logits_noisy 轉換為 [batch_size * seq_len, num_classes] 的形狀
+        # logits_noisy_flat = logits_noisy.view(-1, logits_noisy.size(2))
         
-        alpha = 1
-        beta = 1
-        gamma = 1
-        delta = 1
+        # # 將 target_class 轉換為 [batch_size * seq_len] 的形狀
+        # target_class_flat = target_class.view(-1)
         
-        loss = alpha * loss_asr + beta * loss_mel + gamma * loss_enc + delta * loss_dec
-        self.ob_loss = loss
+        # # 計算 cross entropy loss
+        # loss_dec = F.cross_entropy(logits_noisy_flat, target_class_flat)
+        # self.ob_loss_dec = loss_dec
+        
+        # alpha = 1
+        # beta = 1
+        # gamma = 1
+        # delta = 1
+        
+        # loss = alpha * loss_asr + beta * loss_mel + gamma * loss_enc + delta * loss_dec
+        # self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
             tokens, tokens_lens = batch.tokens             
@@ -229,14 +233,20 @@ class ASR(sb.Brain):
         
     def on_fit_batch_end(self, batch, outputs, loss, should_step):     
         
+        # # Log to WandB
+        # if if_main_process():  # Only log once per step
+        #     wandb.log({
+        #         "batch_train_total_loss": self.ob_loss.item(),
+        #         "batch_train_loss_mel": self.ob_loss_mel.item(),
+        #         "batch_train_loss_enc": self.ob_loss_enc.item(),
+        #         "batch_train_loss_dec": self.ob_loss_dec.item(),
+        #         "batch_train_loss_asr": self.ob_loss_asr.item(),
+        #     })
+        
         # Log to WandB
         if if_main_process():  # Only log once per step
             wandb.log({
-                "batch_train_total_loss": self.ob_loss.item(),
-                "batch_train_loss_mel": self.ob_loss_mel.item(),
-                "batch_train_loss_enc": self.ob_loss_enc.item(),
-                "batch_train_loss_dec": self.ob_loss_dec.item(),
-                "batch_train_loss_asr": self.ob_loss_asr.item(),
+                "batch_train_loss": loss.item(),
             })
 
 def dataio_prepare(hparams, tokenizer):
@@ -338,9 +348,9 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
     
     # Initialize WandB
-    wandb.init(project="v5", 
+    wandb.init(project="v6", 
                config=hparams,
-               name="loss asr + loss mel + loss enc + loss dec 5 epoch",
+               name="finetune whisper on reorganize aishell3 dataset ",
     )
     
     # Create experiment directory
@@ -350,18 +360,22 @@ if __name__ == "__main__":
         overrides=overrides,
     )
 
-    # Dataset prep (parsing mandarin)
-    from mandarin_prepare import prepare_mandarin  # noqa
+    # Dataset prep (parsing aishell3)
+    from aishell3_prepare import prepare_aishell3  # noqa
 
     # multi-gpu (ddp) save data preparation
     run_on_main(
-        prepare_mandarin,
+        prepare_aishell3,
         kwargs={
             "data_folder": hparams["data_folder"],
             "tr_splits": hparams["train_splits"],
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
+            "merge_train_lst": hparams["train_splits"],
+            "merge_train_name": "train.csv",
+            "merge_valid_lst": hparams["dev_splits"],
+            "merge_valid_name": "valid.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )
@@ -381,10 +395,10 @@ if __name__ == "__main__":
         checkpointer=hparams["checkpointer"],
     )
     
-    # We load the pretrained whisper model
-    if "pretrainer" in hparams.keys():
-        run_on_main(hparams["pretrainer"].collect_files)
-        hparams["pretrainer"].load_collected()
+    # # We load the pretrained whisper model
+    # if "pretrainer" in hparams.keys():
+    #     run_on_main(hparams["pretrainer"].collect_files)
+    #     hparams["pretrainer"].load_collected()
     
     # We dynamically add the tokenizer to our brain class.
     # NB: This tokenizer corresponds to the one used for Whisper.

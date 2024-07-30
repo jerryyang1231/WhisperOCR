@@ -7,7 +7,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/whisper/<seed>/20dB/freeze_whisper_train_fusion/loss_asr + loss_mel + loss_enc + loss_dec
+output_folder: !ref results/whisper/<seed>/20dB/freeze_whisper_train_fusion/mixing loss
 output_wer_folder: !ref <output_folder>/
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -41,7 +41,7 @@ ckpt_interval_minutes: 10 # save checkpoint every N min
 
 ############################## Training Parameters #############################
 freeze_whisper: True
-number_of_epochs: 5
+number_of_epochs: 9
 weight_decay: 0.01
 lr_whisper: 1e-5
 warmup_steps: 500

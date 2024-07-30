@@ -151,7 +151,11 @@ class ASR(sb.Brain):
         gamma = 1
         delta = 1
         
-        loss = alpha * loss_asr + beta * loss_mel + gamma * loss_enc + delta * loss_dec
+        if self.hparams.epoch_counter.current <= 5:
+            loss = alpha * loss_asr + beta * loss_mel + gamma * loss_enc 
+        else:
+            loss = alpha * loss_asr + beta *loss_mel + gamma * loss_enc + delta * loss_dec
+        
         self.ob_loss = loss
         
         if stage != sb.Stage.TRAIN:
@@ -340,7 +344,7 @@ if __name__ == "__main__":
     # Initialize WandB
     wandb.init(project="v5", 
                config=hparams,
-               name="loss asr + loss mel + loss enc + loss dec 5 epoch",
+               name="mixing loss train 9 epoch",
     )
     
     # Create experiment directory

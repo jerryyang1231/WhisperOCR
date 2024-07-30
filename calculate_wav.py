@@ -145,8 +145,8 @@ def calculate_audio_duration(base_path, target_folder, target_duration=3600):
     print(f"不加 {target_folder} 的所有音檔的累積時間是：{total_duration_without_target / 3600:.2f} 小時")
 
 # 使用範例
-base_path = "/share/nas169/jerryyang/corpus/aishell3/test/wav"
-target_folder = "SSB0057"
+base_path = "/share/nas169/jerryyang/corpus/aishell3/train/wav"
+target_folder = "SSB0339"
 calculate_audio_duration(base_path, target_folder)
 
 

@@ -43,7 +43,7 @@ OPEN_SLR_11_NGRAM_MODELs = [
 ]
 
 
-def prepare_aishell3(
+def prepare_aishell3_all_from_train(
     data_folder,
     save_folder,
     tr_splits=[],
@@ -107,8 +107,7 @@ def prepare_aishell3(
     if skip_prep:
         return
     data_folder = data_folder
-    train_splits = tr_splits 
-    test_splits = dev_splits + te_splits
+    splits = tr_splits + dev_splits + te_splits
     save_folder = save_folder
     select_n_sentences = select_n_sentences
     conf = {
@@ -123,39 +122,31 @@ def prepare_aishell3(
     save_opt = os.path.join(save_folder, OPT_FILE)
 
     # Check if this phase is already done (if so, skip it)
-    if skip(train_splits, save_folder, conf) and skip(test_splits, save_folder, conf):
+    if skip(splits, save_folder, conf):
         logger.info("Skipping preparation, completed in previous run.")
         return
     else:
         logger.info("Data_preparation...")
 
-    # 這個不用的話應該可以註解掉，我只有檢查train set，沒有檢查test set
     # Additional checks to make sure the data folder contains aishell3
-    check_aishell3_folders(data_folder, train_splits)
+    check_aishell3_folders(data_folder, splits)
 
-    # 處理 train_splits
-    all_texts_train = process_splits(train_splits, "train", data_folder, save_folder, select_n_sentences)
-
-    # 處理 test_splits
-    all_texts_test = process_splits(test_splits, "test", data_folder, save_folder, select_n_sentences)
-
-    # 這目前用不到，跳過
-    # 更新所有文本字典
-    # all_texts = {**all_texts_train, **all_texts_test}
+    # 處理 splits
+    all_texts = process_splits(splits, data_folder, save_folder, select_n_sentences)
 
     # Merging train.csv file if needed
-    merge_csv_files(merge_lst_tr, merge_name_tr, "train", save_folder)
+    merge_csv_files(merge_lst_tr, merge_name_tr, save_folder)
 
     # Merging valid.csv file if needed
-    merge_csv_files(merge_lst_cv, merge_name_cv, "test", save_folder)
+    merge_csv_files(merge_lst_cv, merge_name_cv, save_folder)
 
     # Merging test.csv file if needed
-    merge_csv_files(merge_lst_tt, merge_name_tt, "test", save_folder)
+    merge_csv_files(merge_lst_tt, merge_name_tt, save_folder)
 
-    # 預設不會走這，先跳過
-    # # Create lexicon.csv and oov.csv
-    # if create_lexicon:
-    #     create_lexicon_and_oov_csv(all_texts, save_folder)
+    # # 預設不會走這，先跳過
+    # # # Create lexicon.csv and oov.csv
+    # # if create_lexicon:
+    # #     create_lexicon_and_oov_csv(all_texts, save_folder)
 
     # saving options
     save_pkl(conf, save_opt)
@@ -299,7 +290,7 @@ def process_line(wav_file, text_dict) -> LSRow:
     )
 
 
-def create_csv(save_folder, data_type, wav_lst, text_dict, split, select_n_sentences):
+def create_csv(save_folder, wav_lst, text_dict, split, select_n_sentences):
     """
     Create the dataset csv file given a list of wav files.
 
@@ -321,7 +312,7 @@ def create_csv(save_folder, data_type, wav_lst, text_dict, split, select_n_sente
     None
     """
     # Setting path for the csv file
-    csv_file = os.path.join(save_folder, f"{data_type}_{split}.csv")
+    csv_file = os.path.join(save_folder, f"{split}.csv")
     if os.path.exists(csv_file):
         logger.info("Csv file %s already exists, not recreating." % csv_file)
         return
@@ -524,18 +515,18 @@ def download_sb_librispeech_lm(destination, rescoring_lm=True):
             os.path.join(destination, "4-gram_sb.arpa"),
         )
 
-def process_splits(splits, data_type, data_folder, save_folder, select_n_sentences=None):
+def process_splits(splits, data_folder, save_folder, select_n_sentences=None):
     all_texts = {}
     
     for split_index in range(len(splits)):
         split = splits[split_index]
 
         wav_lst = get_all_files(
-            os.path.join(data_folder, data_type, "wav", split), match_and=[".wav"]
+            os.path.join(data_folder, "train/wav", split), match_and=[".wav"]
         )
         
         text_lst = get_all_files(
-            os.path.join(data_folder, data_type), match_and=["content.txt"]
+            os.path.join(data_folder, "train"), match_and=["content.txt"]
         )
         
         text_dict = text_to_dict(text_lst)
@@ -547,11 +538,11 @@ def process_splits(splits, data_type, data_folder, save_folder, select_n_sentenc
         else:
             n_sentences = len(wav_lst)
         
-        create_csv(save_folder, data_type, wav_lst, text_dict, split, n_sentences)
+        create_csv(save_folder, wav_lst, text_dict, split, n_sentences)
     
     return all_texts
 
-def merge_csv_files(merge_list, merge_name, file_type, save_folder):
+def merge_csv_files(merge_list, merge_name, save_folder):
     if merge_list and merge_name is not None:
-        merge_files = [f"{file_type}_{split}.csv" for split in merge_list]
+        merge_files = [f"{split}.csv" for split in merge_list]
         merge_csvs(data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name)

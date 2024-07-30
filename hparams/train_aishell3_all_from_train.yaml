@@ -21,9 +21,9 @@ whisper_folder: !ref <save_folder>/whisper_checkpoint
 
 # Data files
 data_folder: /share/nas169/jerryyang/corpus/aishell3 # e,g./path/to/aishell3
-train_splits: ["SSB0005", "SSB0009"]
-dev_splits: ["SSB0005", "SSB0009", "SSB0011", "SSB0012", "SSB0016", "SSB0018", "SSB0033", "SSB0038", "SSB0043", "SSB0057", "SSB0073", "SSB0080", "SSB0112", "SSB0122", "SSB0133", "SSB0139", "SSB0145", "SSB0149", "SSB0193", "SSB0197", "SSB0200", "SSB0241", "SSB0246", "SSB0261", "SSB0267", "SSB0273", "SSB0287", "SSB0288", "SSB0299"]
-test_splits: ["SSB0307", "SSB0309", "SSB0315", "SSB0316", "SSB0323", "SSB0338", "SSB0339", "SSB0341", "SSB0342", "SSB0354", "SSB0366", "SSB0375", "SSB0379", "SSB0380", "SSB0382", "SSB0385", "SSB0393", "SSB0394", "SSB0395", "SSB0407", "SSB0415", "SSB0427", "SSB0434", "SSB0435", "SSB0470", "SSB0482", "SSB0502", "SSB0534", "SSB0535", "SSB0539", "SSB0544", "SSB0565", "SSB0570", "SSB0578", "SSB0588", "SSB0590", "SSB0594", "SSB0599", "SSB0601", "SSB0603", "SSB0606", "SSB0607", "SSB0609", "SSB0614", "SSB0623", "SSB0629", "SSB0631", "SSB0632", "SSB0666", "SSB0668"]
+train_splits: ["SSB0005", "SSB0009", "SSB0011", "SSB0012", "SSB0016", "SSB0018", "SSB0033", "SSB0038", "SSB0043", "SSB0057", "SSB0073", "SSB0080", "SSB0112", "SSB0122", "SSB0133", "SSB0139", "SSB0145", "SSB0149", "SSB0193", "SSB0197", "SSB0200", "SSB0241", "SSB0246", "SSB0261", "SSB0267", "SSB0273", "SSB0287"]
+dev_splits: ["SSB0288", "SSB0299", "SSB0307", "SSB0309"]
+test_splits: ["SSB0315", "SSB0316", "SSB0323", "SSB0338", "SSB0339"]
 skip_prep: False
 train_csv: !ref <output_folder>/train.csv
 valid_csv: !ref <output_folder>/valid.csv
@@ -32,9 +32,9 @@ test_csv: !ref <output_folder>/test.csv
 # image_folder: /share/nas169/jerryyang/corpus/mandarin/image/b_1
 
 # Data for augmentation
-data_folder_noise: /share/nas169/jerryyang/speechbrain/tests/samples/noise
-noise_annotation: /share/nas169/jerryyang/speechbrain/tests/samples/annotation/noise.csv
-replacements: {"noise_folder": "/share/nas169/jerryyang/speechbrain/tests/samples/noise"}
+# data_folder_noise: /share/nas169/jerryyang/speechbrain/tests/samples/noise
+# noise_annotation: /share/nas169/jerryyang/speechbrain/tests/samples/annotation/noise.csv
+# replacements: {"noise_folder": "/share/nas169/jerryyang/speechbrain/tests/samples/noise"}
 
 ckpt_interval_minutes: 10 # save checkpoint every N min
 
@@ -53,8 +53,8 @@ sampling_rate: 16_000
 # With data_parallel batch_size is split into N jobs
 # With DDP batch_size is multiplied by N jobs
 # This setup works well with 1x 32GB GPU
-batch_size: 1
-test_batch_size: 1
+batch_size: 16
+test_batch_size: 16
 grad_accumulation_factor: 1
 
 # Decoding parameters
@@ -62,10 +62,10 @@ min_decode_ratio: 0.0
 max_decode_ratio: 1.0
 test_beam_size: 8
 
-# AddNoise
-sample_rate: 16000
-num_workers: 4
-snr: 20
+# # AddNoise
+# sample_rate: 16000
+# num_workers: 4
+# snr: 20
 
 ####################### Model Parameters #######################################
 

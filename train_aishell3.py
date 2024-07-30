@@ -17,6 +17,7 @@ Authors
 # my command
 # python train_aishell3.py hparams/train_aishell3.yaml --test_only
 # python train_aishell3.py hparams/train_aishell3.yaml
+# python train_aishell3.py hparams/train_aishell3_all_from_train.yaml
 
 import logging
 import os
@@ -287,18 +288,13 @@ def dataio_prepare(hparams, tokenizer):
     )
     valid_data = valid_data.filtered_sorted(sort_key="duration")
 
-    # test is separate
-    test_datasets = {}
-    for csv_file in hparams["test_csv"]:
-        # name = 檔案名稱
-        name = Path(csv_file).stem
-        test_datasets[name] = sb.dataio.dataset.DynamicItemDataset.from_csv(
-            csv_path=csv_file,
-            replacements={"data_root": data_folder}
-        )
-        test_datasets[name] = test_datasets[name].filtered_sorted(sort_key="duration")
+    test_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["test_csv"],
+        replacements={"data_root": data_folder},
+    )
+    test_data = test_data.filtered_sorted(sort_key="duration")
 
-    datasets = [train_data, valid_data] + [i for k, i in test_datasets.items()]
+    datasets = [train_data, valid_data, test_data]
     
     # 2. Define audio pipeline:
     @sb.utils.data_pipeline.takes("wav")
@@ -334,7 +330,7 @@ def dataio_prepare(hparams, tokenizer):
         ["id", "sig", "tokens_list", "tokens_bos", "tokens_eos", "tokens"],
     )
     
-    return train_data, valid_data, test_datasets
+    return train_data, valid_data, test_data
 
 if __name__ == "__main__":
     
@@ -350,7 +346,7 @@ if __name__ == "__main__":
     # Initialize WandB
     wandb.init(project="v6", 
                config=hparams,
-               name="finetune whisper on reorganize aishell3 dataset ",
+               name="finetune whisper all from train batch_size=16",
     )
     
     # Create experiment directory
@@ -361,21 +357,24 @@ if __name__ == "__main__":
     )
 
     # Dataset prep (parsing aishell3)
-    from aishell3_prepare import prepare_aishell3  # noqa
+    # 這邊暫時改全部從 train 拿 data
+    from aishell3_prepare_all_from_train import prepare_aishell3_all_from_train  # noqa
 
     # multi-gpu (ddp) save data preparation
     run_on_main(
-        prepare_aishell3,
+        prepare_aishell3_all_from_train,
         kwargs={
             "data_folder": hparams["data_folder"],
             "tr_splits": hparams["train_splits"],
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
-            "merge_train_lst": hparams["train_splits"],
-            "merge_train_name": "train.csv",
-            "merge_valid_lst": hparams["dev_splits"],
-            "merge_valid_name": "valid.csv",
+            "merge_lst_tr": hparams["train_splits"],
+            "merge_name_tr": "train.csv",
+            "merge_lst_cv": hparams["dev_splits"],
+            "merge_name_cv": "valid.csv",
+            "merge_lst_tt": hparams["test_splits"],
+            "merge_name_tt": "test.csv",
             "skip_prep": hparams["skip_prep"],
         },
     )
@@ -384,7 +383,7 @@ if __name__ == "__main__":
     tokenizer = hparams["whisper"].tokenizer
     
     # here we create the datasets objects as well as tokenization and encoding
-    train_data, valid_data, test_datasets = dataio_prepare(hparams, tokenizer)
+    train_data, valid_data, test_data = dataio_prepare(hparams, tokenizer)
     
     # Trainer initialization
     asr_brain = ASR(
@@ -416,12 +415,11 @@ if __name__ == "__main__":
     # Testing
     os.makedirs(hparams["output_wer_folder"], exist_ok=True)
 
-    for k in test_datasets.keys():  # keys are test_clean, test_other etc
-        asr_brain.hparams.test_wer_file = os.path.join(
-            hparams["output_wer_folder"], f"wer_{k}.txt"
-        )
-        asr_brain.evaluate(
-            test_datasets[k],
-            test_loader_kwargs=hparams["test_loader_kwargs"],
-            min_key="CER",
-        )
+    asr_brain.hparams.test_wer_file = os.path.join(
+        hparams["output_wer_folder"], "wer_test_data.txt"
+    )
+    asr_brain.evaluate(
+        test_data,
+        test_loader_kwargs=hparams["test_loader_kwargs"],
+        min_key="CER",
+    )
